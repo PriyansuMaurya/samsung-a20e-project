@@ -1,0 +1,3 @@
+# Termux scripts must retain Unix line endings when checked out on Windows.
+*.sh text eol=lf
+galaxy-server/serverctl text eol=lf
