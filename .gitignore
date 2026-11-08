@@ -1,0 +1,4 @@
+# Local installers and Python bytecode are generated or downloaded artifacts.
+*.apk
+__pycache__/
+*.py[cod]

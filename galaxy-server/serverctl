@@ -1,0 +1,51 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -eu
+base="$HOME/galaxy-server"
+mkdir -p "$base/run" "$base/log"
+config="$base/run/nginx.conf"
+make_config() {
+  cat > "$config" <<EOF
+worker_processes 1;
+pid $base/run/nginx.pid;
+error_log $base/log/nginx-error.log warn;
+events { worker_connections 64; }
+http {
+  include $PREFIX/etc/nginx/mime.types;
+  default_type application/octet-stream;
+  access_log off;
+  server_tokens off;
+  sendfile on;
+  server {
+    listen 8080;
+    allow 127.0.0.1;
+    allow 192.168.0.0/24;
+    deny all;
+    root $base/site;
+    index index.html;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    location /api/status { proxy_pass http://127.0.0.1:8765; }
+  }
+}
+EOF
+}
+start() {
+  if ! kill -0 "$(cat "$base/run/status.pid" 2>/dev/null || echo 0)" 2>/dev/null || [ ! -s "$base/run/status.pid" ]; then
+    nohup python "$base/status.py" >> "$base/log/status.log" 2>&1 &
+    echo $! > "$base/run/status.pid"
+  fi
+  make_config
+  nginx -t -c "$config"
+  if [ -s "$base/run/nginx.pid" ] && kill -0 "$(cat "$base/run/nginx.pid")" 2>/dev/null; then
+    nginx -c "$config" -s reload
+  else
+    nginx -c "$config"
+  fi
+}
+case "${1:-}" in
+  start|restart) start ;;
+  stop) if [ -s "$base/run/nginx.pid" ]; then nginx -c "$config" -s quit; fi; if [ -s "$base/run/status.pid" ]; then kill "$(cat "$base/run/status.pid")" 2>/dev/null || true; rm -f "$base/run/status.pid"; fi ;;
+  status) curl -fsS http://127.0.0.1:8080/api/status; echo ;;
+  *) echo "Usage: $0 {start|restart|stop|status}"; exit 2 ;;
+esac
