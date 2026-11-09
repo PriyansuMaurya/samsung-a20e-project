@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")"
 pkg update -y
 pkg upgrade -y
-pkg install -y python git nginx curl termux-api
+pkg install -y python git openssh nginx curl termux-api
 mkdir -p "$HOME/.termux/boot" "$HOME/galaxy-server/run" "$HOME/galaxy-server/log" "$HOME/galaxy-server/priv"
 cp -R site status.py serverctl supervise.sh autodeploy.py "$HOME/galaxy-server/"
 cp site/console.html "$HOME/galaxy-server/priv/console.html"
