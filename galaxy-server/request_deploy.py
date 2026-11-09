@@ -20,6 +20,7 @@ def main():
     def request(event):
         req = urllib.request.Request('https://galaxy.maurya.ie/api/deploy/github', body,
                                      {'Content-Type': 'application/json',
+                                      'User-Agent': 'Galaxy-Deploy/1.0 (GitHub Actions)',
                                       'X-Hub-Signature-256': signature,
                                       'X-GitHub-Event': event})
         with urllib.request.urlopen(req, timeout=20) as response:
@@ -35,7 +36,7 @@ def main():
                 if result.get('status') != 'deployment queued':
                     raise RuntimeError('Phone did not accept deployment')
         except (OSError, urllib.error.URLError) as error:
-            print('Waiting for phone:', type(error).__name__, flush=True)
+            print('Waiting for phone:', type(error).__name__, getattr(error, 'code', ''), flush=True)
         time.sleep(10)
     raise RuntimeError('Phone did not confirm deployment within four minutes; inspect log/deploy.log')
 
