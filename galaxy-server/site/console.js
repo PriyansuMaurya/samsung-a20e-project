@@ -27,6 +27,9 @@
     logs: null,
     statusTimer: null,
     logTimer: null,
+    scrollPositions: {},
+    settingsEdit: 0,
+    settingsSaved: 0,
     loading: false
   };
 
@@ -117,6 +120,7 @@
   // ------------------------------------------------------------- navigation
   function show(route) {
     if (!ROUTES[route]) { route = 'overview'; }
+    state.scrollPositions[state.route] = window.scrollY;
     state.route = route;
     document.body.classList.toggle('terminal-view', route === 'terminal');
     $$('.view').forEach(function (view) {
@@ -130,7 +134,13 @@
     $('#page-sub').textContent = ROUTES[route][1];
     document.title = ROUTES[route][0] + ' · Galaxy Console';
     closeDrawer();
-    if (route !== 'terminal' && terminalId) { closeTerminal(); }
+    // Views stay mounted: the shell, its stream and each form belong to the
+    // dashboard session, rather than the currently visible navigation item.
+    window.scrollTo(0, state.scrollPositions[route] || 0);
+    scheduleLogs();
+    if (route === 'terminal' && terminalId) {
+      window.requestAnimationFrame(fitTerminal);
+    }
     if (route === 'metrics') { renderCharts(); }
     if (route === 'logs') { loadLogs(); }
     if (route === 'settings') { loadSettings(); loadEvents(); }
@@ -704,8 +714,11 @@
     var url = '/api/logs?service=' + encodeURIComponent(service) +
       '&severity=' + encodeURIComponent(severity) + '&q=' + encodeURIComponent(query);
     api(url).then(function (data) {
+      if (service !== $('#log-service').value || severity !== $('#log-severity').value ||
+          query !== $('#log-query').value.trim()) { return; }
       state.logs = data;
       var host = $('#log-lines');
+      var scrollTop = host.scrollTop;
       host.textContent = '';
       if (!data.lines.length) {
         host.appendChild(el('li', { class: 'empty', text: 'No lines match this filter.' }));
@@ -718,6 +731,7 @@
           ]));
         });
       }
+      host.scrollTop = scrollTop;
       $('#log-meta').textContent = data.matched + ' of ' + data.total + ' lines match · ' +
         (data.sizes_kb[service] === null ? 'file missing' : data.sizes_kb[service] + ' kB on disk') +
         (data.redactions ? ' · ' + data.redactions + ' credential' + (data.redactions === 1 ? '' : 's') + ' redacted' : '');
@@ -741,7 +755,9 @@
     api('/api/settings').then(function (data) {
       state.settings = data;
       var settings = data.settings;
-      $('#probe-hosts').checked = Boolean(settings.host_probes);
+      if (state.settingsEdit === state.settingsSaved) {
+        $('#probe-hosts').checked = Boolean(settings.host_probes);
+      }
       $('#probe-note').textContent = 'Public HTTPS is not monitored externally.';
       $('#db-path').textContent = data.db.path;
       $('#db-size').textContent = data.db.size_kb + ' kB';
@@ -899,7 +915,9 @@
   }
 
   function fitTerminal() {
-    if (!terminalId || !terminalFit || !terminalEmulator) { return; }
+    // A hidden xterm has no useful dimensions; keep the shell's current size
+    // until its view is visible again.
+    if (state.route !== 'terminal' || !terminalId || !terminalFit || !terminalEmulator) { return; }
     terminalFit.fit();
     var id = terminalId;
     var cols = terminalEmulator.cols, rows = terminalEmulator.rows;
@@ -991,10 +1009,6 @@
       field.value = '';
       button.disabled = true;
       terminalRequest('open', { password: password }).then(function (data) {
-        if (state.route !== 'terminal') {
-          terminalRequest('close', { id: data.id }).catch(function () {});
-          return;
-        }
         terminalId = data.id;
         $('#terminal-lock').hidden = true;
         $('#terminal-session').hidden = false;
@@ -1010,7 +1024,7 @@
           flushTerminalInput();
         });
         fitTerminal();
-        terminalEmulator.focus();
+        if (state.route === 'terminal') { terminalEmulator.focus(); }
         startTerminalStream();
       }).catch(function (error) {
         if (terminalId) { closeTerminal(); }
@@ -1042,14 +1056,17 @@
       searchTimer = setTimeout(loadLogs, 350);
     });
 
+    $('#probe-hosts').addEventListener('change', function () { state.settingsEdit++; });
     $('#probe-form').addEventListener('submit', function (event) {
       event.preventDefault();
+      var savedEdit = state.settingsEdit;
       api('/api/settings', {
         method: 'POST',
         body: JSON.stringify({
           host_probes: $('#probe-hosts').checked
         })
       }).then(function () {
+        state.settingsSaved = savedEdit;
         toast('Probe settings saved');
         loadSettings();
         refreshStatus();

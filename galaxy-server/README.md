@@ -92,6 +92,8 @@ Use at least 16 characters. Dashboard sign-in and the terminal password are both
 
 Screen reader mode is off by default to keep large terminal output responsive. Enable **Screen reader mode** in the terminal toolbar for accessible terminal output; it takes effect immediately and the browser remembers the choice when local storage is available.
 
+Switching between dashboard views keeps the same terminal shell and output stream alive, including commands running while another view is open. Returning to Terminal restores its existing output and fits it to the visible view. Use **Lock terminal** to close the shell explicitly. Dashboard navigation also preserves log filters, the auto-refresh choice, chart range, unsaved probe settings and each view's scroll position. These view states last for the current dashboard page; a full reload or closing the tab ends the terminal session as before.
+
 ## Console and control API
 
 `/` is the public landing page. `/console` is the admin console: a signed-in single-page app with seven views — Overview, Metrics, Services, Networking, Logs, Terminal and Settings — reached through `/login` and left with `/logout`. Nginx serves the static landing page from `site/` and proxies `/console`, `/login`, `/logout` and `/api/*` to `status.py` on `127.0.0.1:8765`; nothing else is routed. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` behind the tunnel and expires after 12 hours, and every private endpoint re-checks it server-side, so a missing or expired cookie gets 401 instead of the page.
