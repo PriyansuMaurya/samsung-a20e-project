@@ -38,8 +38,6 @@ while :; do
     nohup cloudflared tunnel run --token-file "$HOME/.cloudflared/galaxy-token" \
       >> "$base/log/tunnel.log" 2>&1 < /dev/null &
   fi
-  if [ -e "$base/run/autodeploy-enabled" ]; then
-    python "$base/autodeploy.py" >> "$base/log/deploy.log" 2>&1
-  fi
-  sleep 15
+  # Deployment is event-driven by GitHub Actions; never poll GitHub here.
+  sleep 60
 done

@@ -39,11 +39,13 @@ The install script runs `pkg update -y`, `pkg upgrade -y`, and `pkg install -y p
 
 ## Operations and updates
 
-Pushes to GitHub's `master` branch deploy automatically. GitHub sends an HMAC-SHA256 signed notification to `/api/deploy/github`; unsigned requests and other branches cannot trigger deployment. The phone fetches the branch using a repository-specific read-only SSH deploy key. The supervisor also checks every 15 seconds to recover missed notifications. Network outages delay deployment until connectivity returns.
+Pushes to GitHub's `master` branch run `.github/workflows/deploy.yml`. GitHub Actions validates syntax and runs the terminal and deployment tests on its own runner. Only after those checks pass does it send an HMAC-SHA256 signed deployment request to `/api/deploy/github`. The phone fetches the exact tested commit using a repository-specific read-only SSH deploy key. Direct push webhooks are ignored. The phone never polls GitHub, which avoids idle network and CPU work.
+
+Actions retries notifications and checks the live revision for up to four minutes during a deployment. If the phone is offline longer, the workflow fails; rerun the failed workflow from GitHub Actions when the phone is available. There is no background deployment polling or self-hosted Actions runner on the phone.
 
 `autodeploy.py` validates Python and shell syntax, installs the site and private console shell, restarts the service, and checks local health. It restores the previous files if installation or startup fails. Runtime credentials, the database, logs and tunnel configuration are preserved. Deployment pauses while the server is deliberately stopped.
 
-Configuration lives in `~/galaxy-server/run`: `deploy-key`, `deploy-secret`, `autodeploy-enabled`, and `deployed-revision`. Keep the key and signing secret private. Remove `autodeploy-enabled` to pause deployment; recreate it with `touch` to resume. Inspect `log/deploy.log` for failures and `run/deployed-revision` for the live commit. GitHub repository settings contain the `galaxy-phone-autodeploy` read-only deploy key and push webhook. A fresh phone installation requires provisioning these credentials before enabling deployment.
+Configuration lives in `~/galaxy-server/run`: `deploy-key`, `deploy-secret`, `autodeploy-enabled`, and `deployed-revision`. Keep the key and signing secret private. GitHub Actions uses the matching repository secret `PHONE_DEPLOY_SECRET`; the old direct push webhook is disabled. Remove `autodeploy-enabled` to pause deployment; recreate it with `touch` to resume. Inspect `log/deploy.log` for failures and `run/deployed-revision` for the live commit. GitHub repository settings contain the `galaxy-phone-autodeploy` read-only deploy key. A fresh phone installation requires provisioning these credentials before enabling deployment.
 
 ```sh
 ~/galaxy-server/serverctl status
@@ -56,7 +58,7 @@ tail -n 50 ~/galaxy-server/log/supervisor.log
 ~/galaxy-server/supervise.sh
 ```
 
-`supervise.sh` is a long-running loop, not a one-shot: it takes the wake lock, writes `run/supervisor.pid`, rechecks the status service on `127.0.0.1:8765` every 15 seconds, and exits immediately if another copy is already running. It skips both the server and the tunnel while their disable flags exist, so a deliberate stop from the dashboard stays stopped.
+`supervise.sh` is a long-running loop, not a one-shot: it takes the wake lock, writes `run/supervisor.pid`, rechecks the status service on `127.0.0.1:8765` every 60 seconds, and exits immediately if another copy is already running. It skips both the server and the tunnel while their disable flags exist, so a deliberate stop from the dashboard stays stopped. It performs no GitHub polling.
 
 Restart restarts the status process and gracefully reloads Nginx, so code changes in `status.py` take effect. Stop writes `run/server-disabled`, quits Nginx and kills the status process, and the supervisor then leaves the server alone; `serverctl start` clears that flag. Tunnel control is separate: `serverctl tunnel-stop` writes `run/tunnel-disabled` and kills the connector, `tunnel-start` clears the flag and starts it, `tunnel-restart` does both. Nginx access logging is disabled to limit writes and avoid collecting client addresses; error and backend logs are stored in `~/galaxy-server/log`. They are not automatically rotated; inspect and truncate them periodically if they grow.
 

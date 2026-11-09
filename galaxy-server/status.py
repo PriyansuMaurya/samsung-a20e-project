@@ -1447,14 +1447,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except (ValueError, UnicodeDecodeError):
                 self._json(400, {'error': 'Invalid webhook payload'})
                 return
-            if (self.headers.get('X-GitHub-Event') == 'push'
+            if (self.headers.get('X-GitHub-Event') in ('actions-deploy', 'actions-deploy-status')
                     and data.get('ref') == 'refs/heads/master'
+                    and re.fullmatch(r'[0-9a-f]{40}', str(data.get('sha', '')))
                     and isinstance(data.get('repository'), dict)
                     and data['repository'].get('full_name') == 'PriyansuMaurya/samsung-a20e-project'
                     and not data.get('deleted')
                     and os.path.exists(os.path.join(RUN_DIR, 'autodeploy-enabled'))):
+                if self.headers.get('X-GitHub-Event') == 'actions-deploy-status':
+                    try:
+                        with open(os.path.join(RUN_DIR, 'deployed-revision')) as marker:
+                            revision = marker.read().strip()
+                    except OSError:
+                        revision = None
+                    self._json(200, {'revision': revision})
+                    return
                 with open(os.path.join(LOG_DIR, 'deploy.log'), 'ab') as log:
-                    subprocess.Popen([sys.executable, os.path.join(BASE, 'autodeploy.py')],
+                    subprocess.Popen([sys.executable, os.path.join(BASE, 'autodeploy.py'), data['sha']],
                                      stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                      start_new_session=True)
                 self._json(202, {'status': 'deployment queued'})

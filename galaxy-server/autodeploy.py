@@ -2,6 +2,8 @@
 """Fetch the production branch and install validated releases on Termux."""
 import fcntl
 import os
+import re
+import sys
 from pathlib import Path
 import shutil
 import subprocess
@@ -41,7 +43,9 @@ def copy_release(source):
     shell.replace(BASE / 'priv/console.html')
 
 
-def deploy():
+def deploy(revision):
+    if not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Expected the commit SHA tested by GitHub Actions')
     if (BASE / 'run/server-disabled').exists():
         return
     checkout = BASE / 'run/deploy-repo'
@@ -49,11 +53,12 @@ def deploy():
                GIT_SSH_COMMAND=f'ssh -i {BASE}/run/deploy-key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15')
     if not checkout.exists():
         run('git', 'init', str(checkout))
-    run('git', '-C', str(checkout), 'fetch', '--depth=1', REPO, 'refs/heads/master', env=env)
-    revision = run('git', '-C', str(checkout), 'rev-parse', 'FETCH_HEAD')
     marker = BASE / 'run/deployed-revision'
     if marker.exists() and marker.read_text().strip() == revision:
         return
+    run('git', '-C', str(checkout), 'fetch', '--depth=1', REPO, revision, env=env)
+    if run('git', '-C', str(checkout), 'rev-parse', 'FETCH_HEAD') != revision:
+        raise RuntimeError('Fetched commit does not match the tested commit')
     run('git', '-C', str(checkout), 'checkout', '--force', '--detach', revision)
     source = checkout / 'galaxy-server'
     for name in FILES:
@@ -98,7 +103,7 @@ if __name__ == '__main__':
         except BlockingIOError:
             raise SystemExit(0)
         try:
-            deploy()
+            deploy(sys.argv[1] if len(sys.argv) == 2 else '')
         except Exception as error:
             print(f'Deployment failed: {error}', flush=True)
             raise SystemExit(1)

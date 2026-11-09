@@ -1,0 +1,31 @@
+name: Test and deploy phone server
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phone-production
+  cancel-in-progress: false
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python and shell scripts
+        run: |
+          python3 -m py_compile galaxy-server/*.py
+          bash -n galaxy-server/serverctl galaxy-server/setup.sh galaxy-server/supervise.sh
+          node --check galaxy-server/site/console.js
+      - name: Test terminal and deployment authentication
+        run: python3 -m unittest discover -s galaxy-server -p 'test_*.py'
+      - name: Deploy tested commit and verify completion
+        env:
+          DEPLOY_SECRET: ${{ secrets.PHONE_DEPLOY_SECRET }}
+        run: python3 galaxy-server/request_deploy.py

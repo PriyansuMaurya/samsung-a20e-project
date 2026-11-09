@@ -23,8 +23,9 @@ class DeployWebhookTest(unittest.TestCase):
             server = status.Server(('127.0.0.1', 0), status.Handler)
             threading.Thread(target=server.serve_forever, daemon=True).start()
 
-            def post(branch='master', secret=b'test-secret', event='push'):
+            def post(branch='master', secret=b'test-secret', event='actions-deploy', sha='a' * 40):
                 body = json.dumps({'ref': 'refs/heads/' + branch,
+                                   'sha': sha,
                                    'repository': {'full_name': 'PriyansuMaurya/samsung-a20e-project'}}).encode()
                 signature = 'sha256=' + hmac.new(secret, body, hashlib.sha256).hexdigest()
                 connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
@@ -41,10 +42,15 @@ class DeployWebhookTest(unittest.TestCase):
                     self.assertEqual(post(secret=b'wrong'), 403)
                     self.assertEqual(post(branch='feature'), 200)
                     self.assertEqual(post(event='ping'), 200)
+                    self.assertEqual(post(event='push'), 200)
+                    self.assertEqual(post(sha='invalid'), 200)
                     launch.assert_not_called()
                     self.assertEqual(post(), 202)
                     launch.assert_called_once()
                     self.assertTrue(launch.call_args.kwargs['start_new_session'])
+                    self.assertEqual(launch.call_args.args[0][-1], 'a' * 40)
+                    self.assertEqual(post(event='actions-deploy-status'), 200)
+                    launch.assert_called_once()
             finally:
                 server.shutdown()
                 server.server_close()
