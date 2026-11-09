@@ -7,3 +7,5 @@ __pycache__/
 # Dashboard basic-auth password and its htpasswd line, kept out of git.
 .dashboard-password
 .dashboard-htpasswd
+# Temporary deployment provisioning files, including webhook credentials.
+.deployment-*

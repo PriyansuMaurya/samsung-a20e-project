@@ -1,9 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Starts, stops and restarts the site. The nginx config is generated here so the
-# basic-auth requirements and the proxy routes stay in one place.
+# routing, the private paths and the no-cache headers stay in one place.
 set -eu
 base="$HOME/galaxy-server"
-mkdir -p "$base/run" "$base/log"
+mkdir -p "$base/run" "$base/log" "$base/priv"
 config="$base/run/nginx.conf"
 passfile="$base/run/htpasswd"
 token="$HOME/.cloudflared/galaxy-token"
@@ -22,20 +22,36 @@ http {
   sendfile on;
   server {
     listen 8080;
-    # This server is published on the internet through the Cloudflare tunnel,
-    # so every path including the API needs the password.
-    auth_basic "Galaxy server";
-    auth_basic_user_file $passfile;
     root $base/site;
     index index.html;
+
+    # The edge used to cache /app.js for four hours while / was fresh, so a new
+    # page ran old JavaScript and never left "checking". No response from this
+    # server is cacheable.
+    add_header Cache-Control "no-store, must-revalidate" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy no-referrer always;
-    location /api/status { proxy_pass http://127.0.0.1:8765; }
-    location /api/logs { proxy_pass http://127.0.0.1:8765; }
-    location /api/action {
-      limit_except POST { deny all; }
+
+    # Public: the landing page and its assets.
+    location / {
+      try_files \$uri \$uri/ =404;
+    }
+
+    # The source bundle may contain a copy of the shell; never serve it directly.
+    location = /console.html { return 404; }
+
+    # Session-checked: the console shell, sign-in, sign-out and every API call.
+    location = /console {  proxy_pass http://127.0.0.1:8765; proxy_set_header Host \$http_host; proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto; proxy_set_header X-Galaxy-Proxy 1; proxy_set_header X-Real-IP \$remote_addr; }
+    location = /login   { proxy_pass http://127.0.0.1:8765; proxy_set_header Host \$http_host; proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto; proxy_set_header X-Galaxy-Proxy 1; proxy_set_header X-Real-IP \$remote_addr; }
+    location = /logout  { proxy_pass http://127.0.0.1:8765; proxy_set_header Host \$http_host; proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto; proxy_set_header X-Galaxy-Proxy 1; proxy_set_header X-Real-IP \$remote_addr; }
+    location /api/ {
       proxy_pass http://127.0.0.1:8765;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
+      proxy_set_header X-Galaxy-Proxy 1; proxy_set_header X-Real-IP \$remote_addr;
+      proxy_read_timeout 30s;
     }
   }
 }
@@ -59,7 +75,7 @@ stop_status() {
 start() {
   rm -f "$base/run/server-disabled"
   if [ ! -s "$passfile" ]; then
-    echo "no dashboard password set; run: $0 passwd" >&2
+    echo "no console password set; run: $0 passwd" >&2
     return 1
   fi
   start_status
@@ -95,12 +111,16 @@ passwd() {
   if [ -s "$base/run/nginx.pid" ]; then nginx -c "$config" -s reload; fi
 }
 
+_tunnel_launch() {
+  nohup cloudflared tunnel run --token-file "$token" >> "$base/log/tunnel.log" 2>&1 < /dev/null &
+  echo "tunnel starting"
+}
+
 tunnel_start() {
   rm -f "$base/run/tunnel-disabled"
   if [ ! -s "$token" ]; then echo "no tunnel token at ~/.cloudflared/galaxy-token" >&2; return 1; fi
   if pgrep -f 'cloudflared tunnel run' >/dev/null 2>&1; then echo "tunnel already running"; return 0; fi
-  nohup cloudflared tunnel run --token-file "$token" >> "$base/log/tunnel.log" 2>&1 < /dev/null &
-  echo "tunnel starting"
+  _tunnel_launch
 }
 
 tunnel_stop() {
@@ -109,14 +129,38 @@ tunnel_stop() {
   echo "tunnel stopped and will not be restarted until enabled"
 }
 
+tunnel_restart() {
+  rm -f "$base/run/tunnel-disabled"
+  if [ ! -s "$token" ]; then echo "no tunnel token at ~/.cloudflared/galaxy-token" >&2; return 1; fi
+  pkill -f 'cloudflared tunnel run' 2>/dev/null || true
+  # cloudflared drains open connections before exiting, which can take longer
+  # than a short wait. Starting a second connector while the old one was still
+  # dying is what left the tunnel with no healthy edge, so the stop is forced
+  # and the launch does not consult pgrep.
+  for _ in $(seq 1 20); do
+    pgrep -f 'cloudflared tunnel run' >/dev/null 2>&1 || break
+    sleep 0.25
+  done
+  pkill -9 -f 'cloudflared tunnel run' 2>/dev/null || true
+  sleep 1
+  _tunnel_launch
+  for _ in $(seq 1 24); do
+    if pgrep -f 'cloudflared tunnel run' >/dev/null 2>&1; then echo "tunnel restarted"; return 0; fi
+    sleep 0.25
+  done
+  echo "error: cloudflared did not come back up" >&2
+  return 1
+}
+
 case "${1:-}" in
   start) start ;;
   restart) stop_status; start ;;
   stop) stop ;;
   passwd) passwd ;;
+  terminal-passwd) python "$base/status.py" --set-terminal-password ;;
   tunnel-start) tunnel_start ;;
   tunnel-stop) tunnel_stop ;;
-  tunnel-restart) tunnel_stop; sleep 1; tunnel_start ;;
-  status) curl -fsS http://127.0.0.1:8765/api/status; echo ;;
-  *) echo "Usage: $0 {start|restart|stop|passwd|tunnel-start|tunnel-stop|tunnel-restart|status}"; exit 2 ;;
+  tunnel-restart) tunnel_restart ;;
+  status) curl -fsS http://127.0.0.1:8765/api/health; echo ;;
+  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|tunnel-start|tunnel-stop|tunnel-restart|status}"; exit 2 ;;
 esac

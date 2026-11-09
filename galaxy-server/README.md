@@ -1,6 +1,6 @@
 # Galaxy A20e local server
 
-Termux, Termux:Boot, Python, Git, Nginx and cloudflared were installed on the connected phone. The homepage, assets and corrected status endpoint returned HTTP 200 from the Windows laptop. Reboot startup is verified; `https://small.maurya.ie` and `https://galaxy.maurya.ie` serve the site over HTTPS through the Cloudflare tunnel, confirmed by checks from outside the network on 9 November 2026 (see `PUBLIC-ACCESS.md`). The address at the time of inspection was `192.168.0.74`; addresses can change. Nginx listens on port 8080 and requires HTTP basic auth on every path, including the API, because the site is published through the tunnel. Credentials live in `run/htpasswd` (`serverctl passwd` rewrites them). Without the password the site answers 401 to LAN and internet clients alike. The user has requested public access; see `PUBLIC-ACCESS.md` for its pending setup.
+Termux, Termux:Boot, Python, Git, Nginx and cloudflared were installed on the connected phone. The homepage, assets and corrected status endpoint returned HTTP 200 from the Windows laptop. Reboot startup is verified; `https://small.maurya.ie` and `https://galaxy.maurya.ie` serve the site over HTTPS through the Cloudflare tunnel, confirmed by checks from outside the network on 9 November 2026 (see `PUBLIC-ACCESS.md`). The address at the time of inspection was `192.168.0.74`; addresses can change. Nginx listens on port 8080. The landing page and its assets are public; the console, its metrics, logs and controls sit behind a session sign-in, and the API answers 401 to anyone without a valid cookie. The console password lives in `run/htpasswd` (`serverctl passwd` rewrites it). See `PUBLIC-ACCESS.md` for how the public hostnames are published.
 
 ## Verified state, 9 November 2026
 
@@ -39,6 +39,12 @@ The install script runs `pkg update -y`, `pkg upgrade -y`, and `pkg install -y p
 
 ## Operations and updates
 
+Pushes to GitHub's `master` branch deploy automatically. GitHub sends an HMAC-SHA256 signed notification to `/api/deploy/github`; unsigned requests and other branches cannot trigger deployment. The phone fetches the branch using a repository-specific read-only SSH deploy key. The supervisor also checks every 15 seconds to recover missed notifications. Network outages delay deployment until connectivity returns.
+
+`autodeploy.py` validates Python and shell syntax, installs the site and private console shell, restarts the service, and checks local health. It restores the previous files if installation or startup fails. Runtime credentials, the database, logs and tunnel configuration are preserved. Deployment pauses while the server is deliberately stopped.
+
+Configuration lives in `~/galaxy-server/run`: `deploy-key`, `deploy-secret`, `autodeploy-enabled`, and `deployed-revision`. Keep the key and signing secret private. Remove `autodeploy-enabled` to pause deployment; recreate it with `touch` to resume. Inspect `log/deploy.log` for failures and `run/deployed-revision` for the live commit. GitHub repository settings contain the `galaxy-phone-autodeploy` read-only deploy key and push webhook. A fresh phone installation requires provisioning these credentials before enabling deployment.
+
 ```sh
 ~/galaxy-server/serverctl status
 ~/galaxy-server/serverctl restart
@@ -50,43 +56,70 @@ tail -n 50 ~/galaxy-server/log/supervisor.log
 ~/galaxy-server/supervise.sh
 ```
 
-`supervise.sh` is a long-running loop, not a one-shot: it takes the wake lock, writes `run/supervisor.pid`, rechecks the status service on `127.0.0.1:8765` every 60 seconds, and exits immediately if another copy is already running. It skips both the server and the tunnel while their disable flags exist, so a deliberate stop from the dashboard stays stopped.
+`supervise.sh` is a long-running loop, not a one-shot: it takes the wake lock, writes `run/supervisor.pid`, rechecks the status service on `127.0.0.1:8765` every 15 seconds, and exits immediately if another copy is already running. It skips both the server and the tunnel while their disable flags exist, so a deliberate stop from the dashboard stays stopped.
 
 Restart restarts the status process and gracefully reloads Nginx, so code changes in `status.py` take effect. Stop writes `run/server-disabled`, quits Nginx and kills the status process, and the supervisor then leaves the server alone; `serverctl start` clears that flag. Tunnel control is separate: `serverctl tunnel-stop` writes `run/tunnel-disabled` and kills the connector, `tunnel-start` clears the flag and starts it, `tunnel-restart` does both. Nginx access logging is disabled to limit writes and avoid collecting client addresses; error and backend logs are stored in `~/galaxy-server/log`. They are not automatically rotated; inspect and truncate them periodically if they grow.
 
-To update website files from Windows, edit `site`, then from this directory run:
+To update the site from Windows, push `site/` and the Python files, then restart:
 
 ```powershell
 ..\platform-tools\adb.exe push site/. /sdcard/Download/galaxy-site/
+..\platform-tools\adb.exe push status.py /sdcard/Download/galaxy-status.py
 ```
 
 In Termux, after storage permission has been granted:
 
 ```sh
 cp -R ~/storage/downloads/galaxy-site/. ~/galaxy-server/site/
+cp ~/storage/downloads/galaxy-status.py ~/galaxy-server/status.py
+cp ~/galaxy-server/site/console.html ~/galaxy-server/priv/console.html
+~/galaxy-server/serverctl restart
 ```
 
-Static changes appear on the next page load. This copy overwrites existing files but does not delete files removed on the laptop. Only transfer trusted files; shared storage is not private. Disconnect USB when done.
+The console shell lives in `priv/` so it is not served as a static file; keep the copy there in step with `site/console.html`. Static changes appear on the next page load, and Python changes need the restart. Only transfer trusted files; shared storage is not private. Disconnect USB when done.
 
-## Dashboard and control API
+## Browser terminal
 
-The site at `/` is a control dashboard: uptime, memory (with swap), storage, battery and temperature, a per-service process table, live tunnel state from the connector's own `/ready` endpoint, log viewing and control buttons.
+The console's Terminal view opens an interactive shell as the Termux user, not root. It supports terminal control keys, resize and full-screen programs, subject to the packages and permissions available on the phone. Set a separate terminal password on the phone before using it:
+
+```sh
+~/galaxy-server/serverctl terminal-passwd
+```
+
+Use at least 16 characters. Dashboard sign-in and the terminal password are both required, including on the home network. The terminal is available through the public console once configured; anyone with both credentials can run commands as the Termux user. Close the session when finished. Sessions also close on sign-out or after ten minutes without input. Commands and terminal output are not recorded in the audit log.
+
+Screen reader mode is off by default to keep large terminal output responsive. Enable **Screen reader mode** in the terminal toolbar for accessible terminal output; it takes effect immediately and the browser remembers the choice when local storage is available.
+
+## Console and control API
+
+`/` is the public landing page. `/console` is the admin console: a signed-in single-page app with seven views — Overview, Metrics, Services, Networking, Logs, Terminal and Settings — reached through `/login` and left with `/logout`. Nginx serves the static landing page from `site/` and proxies `/console`, `/login`, `/logout` and `/api/*` to `status.py` on `127.0.0.1:8765`; nothing else is routed. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` behind the tunnel and expires after 12 hours, and every private endpoint re-checks it server-side, so a missing or expired cookie gets 401 instead of the page.
 
 | Piece | Where |
 |---|---|
-| Dashboard markup, styles, logic | `site/index.html`, `site/style.css`, `site/app.js` |
-| Status, logs and actions | `status.py` on `127.0.0.1:8765`, proxied by Nginx under `/api/` |
+| Landing page | `site/index.html`, `site/style.css` |
+| Console shell, styles, logic | `priv/console.html`, `site/console.css`, `site/console.js` |
+| Status, charts, logs, actions | `status.py` on `127.0.0.1:8765` |
 | Password | `run/htpasswd`, `{SHA}` format, set with `~/galaxy-server/serverctl passwd` |
 
-Actions are whitelisted serverctl subcommands; the request body is never passed to a shell, and `/api/action` accepts POST with `application/json` only. Valid actions: `server-restart`, `server-stop`, `tunnel-start`, `tunnel-stop`, `tunnel-restart`. Log names are whitelisted to `tunnel`, `supervisor`, `nginx-error` and `status`, capped at 200 lines from the last 64 KB of the file.
+Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`. `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
 
-Stopping the server takes the dashboard down with it, because Nginx serves the dashboard. The way back is the phone: `~/galaxy-server/serverctl start`.
+`status.py` samples every 30 seconds into `run/galaxy.db`: raw samples are kept for 7 days and pruned, and the 24-hour and 7-day views aggregate those rows into 5- and 30-minute buckets in SQL. A bucket with no sample is returned as a gap, never as a zero, so the charts show missing data as missing. Health is computed server-side from memory, storage, battery, service states, tunnel readiness and the HTTPS probe, and returned as `health` plus `alerts`; values older than four sample intervals are marked stale and a component with no reading is reported as not monitored.
 
-Battery and temperature come from `termux-battery-status`, which needs both the Termux:API app and the `termux-api` package. Without them the tile reports `n/a` and everything else still works. Android blocks `/proc/uptime`, `/proc/loadavg`, `/sys/class/power_supply` and `/sys/class/net` from a non-root app, so uptime comes from `CLOCK_BOOTTIME` and load average is not shown at all.
+The 24-hour health timeline is the main chart: nginx, the tunnel and public HTTPS each get a row, with markers for reboots, service restarts and disconnects taken from the event log. CPU, memory, battery (with charging bands) and free storage are separate line charts. No external probe integration is configured, so public HTTPS is **Not monitored**. The separate hostname checks run from the phone and do not establish external availability.
+
+Actions are whitelisted serverctl subcommands; nothing from a request reaches a shell, `/api/action` accepts `application/json` only, and cross-origin POSTs are refused. Valid actions: `server-restart`, `server-stop`, `tunnel-start`, `tunnel-stop`, `tunnel-restart`. The server and tunnel actions drop the connection that carried the request, so they are scheduled a second later and the reply is sent first. Actions are recorded in `log/auth.log` and the audit table; actions that disconnect the console are recorded as scheduled, not as verified outcomes.
+
+Logs are read from whitelisted names — `nginx-error`, `tunnel`, `supervisor`, `status` and `auth` — searched by term and severity, capped per request, and passed through `redact()` so tunnel tokens, passwords and cookies never reach the browser. `auth.log` rotates itself at 64 KB.
+
+Per-service numbers come from `/proc/<pid>/status` (`VmRSS`) and `/proc/<pid>/stat` field 22 (start time in clock ticks, subtracted from `CLOCK_BOOTTIME`), with restarts counted from the event log over 24 hours and the newest matching error line from that service's log. Tunnel numbers come from the connector's own Prometheus endpoint on `127.0.0.1:20241`: `cloudflared_tunnel_total_requests`, `cloudflared_tunnel_request_errors`, `cloudflared_tunnel_response_by_code`, `go_goroutines` and `go_memstats_alloc_bytes`. Android blocks `/proc/stat`, `/proc/loadavg` and `/proc/net/dev` from a non-root app, so CPU is reported for the server processes only and there is no network throughput — the console labels both rather than inventing numbers.
+
+Stopping the server takes the console down with it, because Nginx serves the console. The way back is the phone: `~/galaxy-server/serverctl start`.
+
+Battery and temperature come from `termux-battery-status`, which needs both the Termux:API app and the `termux-api` package. Without them the cards report `n/a` and everything else still works. Android blocks `/proc/uptime`, `/proc/loadavg`, `/sys/class/power_supply` and `/sys/class/net` from a non-root app, so uptime comes from `CLOCK_BOOTTIME` and load average is not shown at all.
 
 ## Checks still required on the phone
 
-1. Open `http://127.0.0.1:8080/` in the phone browser and `http://192.168.0.74:8080/` on a separate Wi-Fi device. The dashboard should show Online and numeric values. Run `curl -i http://127.0.0.1:8080/api/status` in Termux.
+1. Open `http://127.0.0.1:8080/` in the phone browser and `http://192.168.0.74:8080/` on a separate Wi-Fi device. The landing page should load without a password; `/console` should ask for one and then show live values, the health timeline and the service table. In Termux, `curl -i http://127.0.0.1:8080/api/status` should return 401 and `~/galaxy-server/serverctl status` should return the health JSON.
 2. Run `ps -A -o PID,RSS,%CPU,ARGS | grep -E 'nginx|status.py'` if supported; Android may restrict process visibility. Record per-process RSS and CPU after several idle minutes. Use Android battery settings or a controlled multi-hour charge/discharge comparison for battery impact; a momentary CPU reading cannot establish battery consumption.
 3. Re-test from a second Wi-Fi device, and from the phone browser, after a restart. Check battery restrictions and the error logs if startup fails. Reserve the phone's DHCP address on the router if desired, and adjust the URL if its IP changes.
 

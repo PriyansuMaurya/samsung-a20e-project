@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex,nofollow">
+<title>Galaxy Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23C3F451'/%3E%3Crect x='10' y='10' width='12' height='12' rx='4' fill='%23070A0E'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="console.css?v=10">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<aside class="sidebar" id="sidebar" aria-label="Console sections">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="brand-text"><strong>Galaxy</strong><span>Console</span></span>
+  </div>
+  <nav class="nav" id="nav">
+    <a href="#/overview" data-route="overview"><span class="glyph" aria-hidden="true">◍</span>Overview</a>
+    <a href="#/metrics" data-route="metrics"><span class="glyph" aria-hidden="true">◔</span>Metrics</a>
+    <a href="#/services" data-route="services"><span class="glyph" aria-hidden="true">▤</span>Services</a>
+    <a href="#/networking" data-route="networking"><span class="glyph" aria-hidden="true">⇄</span>Networking</a>
+    <a href="#/logs" data-route="logs"><span class="glyph" aria-hidden="true">≡</span>Logs</a>
+    <a href="#/terminal" data-route="terminal"><span class="glyph" aria-hidden="true">›_</span>Terminal</a>
+    <a href="#/settings" data-route="settings"><span class="glyph" aria-hidden="true">⚙</span>Settings</a>
+  </nav>
+  <div class="sidebar-foot">
+    <span class="who"><span id="who">{{USER}}</span><span class="muted" id="host-line">Samsung Galaxy A20e</span></span>
+    <a class="signout" href="/logout">Sign out</a>
+  </div>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="shell">
+  <header class="topbar">
+    <button class="icon-btn" id="menu" type="button" aria-label="Open navigation"
+            aria-controls="sidebar" aria-expanded="false">☰</button>
+    <div class="titles">
+      <h1 id="page-title">Overview</h1>
+      <p id="page-sub">Live state of the phone, the site and the tunnel.</p>
+    </div>
+    <div class="topbar-end">
+      <span class="health-pill" id="health" data-state="unknown">Checking</span>
+      <span class="sampled" id="sampled">no sample yet</span>
+      <button class="btn small" id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+
+    <!-- Overview -------------------------------------------------------- -->
+    <section class="view" id="view-overview" aria-labelledby="page-title">
+      <div class="components" id="components"></div>
+      <div class="alerts" id="alerts" hidden></div>
+
+      <div class="kpis" id="kpis">
+        <article class="kpi">
+          <div class="kpi-head"><span>Uptime</span><span class="stamp" data-stamp="uptime">—</span></div>
+          <strong class="num" id="kpi-uptime">—</strong>
+          <p class="sub" id="kpi-uptime-sub">device boot</p>
+        </article>
+        <article class="kpi">
+          <div class="kpi-head"><span>CPU load</span><span class="stamp" data-stamp="cpu">—</span></div>
+          <strong class="num" id="kpi-cpu">—</strong>
+          <p class="sub" id="kpi-cpu-sub">server processes</p>
+        </article>
+        <article class="kpi">
+          <div class="kpi-head"><span>Memory</span><span class="stamp" data-stamp="memory">—</span></div>
+          <strong class="num" id="kpi-memory">—</strong>
+          <p class="sub" id="kpi-memory-sub">—</p>
+        </article>
+        <article class="kpi">
+          <div class="kpi-head"><span>Free storage</span><span class="stamp" data-stamp="storage">—</span></div>
+          <strong class="num" id="kpi-storage">—</strong>
+          <p class="sub" id="kpi-storage-sub">—</p>
+        </article>
+        <article class="kpi">
+          <div class="kpi-head"><span>Battery</span><span class="stamp" data-stamp="battery">—</span></div>
+          <strong class="num" id="kpi-battery">—</strong>
+          <p class="sub" id="kpi-battery-sub">—</p>
+        </article>
+        <article class="kpi">
+          <div class="kpi-head"><span>Tunnel requests</span><span class="stamp" data-stamp="tunnel">—</span></div>
+          <strong class="num" id="kpi-requests">—</strong>
+          <p class="sub" id="kpi-requests-sub">—</p>
+        </article>
+      </div>
+
+      <section class="card timeline-card">
+        <div class="card-head">
+          <div>
+            <h2>Health timeline</h2>
+            <p class="card-sub" id="timeline-sub">Nginx, tunnel and public HTTPS, sampled continuously.</p>
+          </div>
+          <div class="segmented" id="range-overview" role="group" aria-label="Time range">
+            <button type="button" data-range="1h">1h</button>
+            <button type="button" data-range="24h" class="on">24h</button>
+            <button type="button" data-range="7d">7d</button>
+          </div>
+        </div>
+        <div class="chart-wrap tall">
+          <canvas id="chart-timeline-overview" role="img"
+                  aria-label="Health timeline for nginx, the tunnel and public HTTPS"></canvas>
+          <p class="chart-empty" hidden>No samples in this range yet. The sampler writes one every 30 seconds.</p>
+        </div>
+        <div class="legend" id="legend-timeline-overview"></div>
+        <div class="events-strip" id="events-overview"></div>
+      </section>
+
+      <div class="two-col">
+        <section class="card">
+          <div class="card-head">
+            <div><h2>Services</h2><p class="card-sub">Resident processes, restart counts from the event log.</p></div>
+            <a class="link" href="#/services">All services</a>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="overview-services">
+              <thead><tr><th>Service</th><th>State</th><th class="right">Uptime</th><th class="right">Memory</th></tr></thead>
+              <tbody><tr><td colspan="4" class="empty">Waiting for the first sample.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div><h2>Recent events</h2><p class="card-sub">Reboots, restarts, disconnects and admin actions.</p></div>
+            <a class="link" href="#/settings">Audit log</a>
+          </div>
+          <ul class="event-list" id="overview-events">
+            <li class="empty">Nothing recorded in this range.</li>
+          </ul>
+        </section>
+      </div>
+    </section>
+
+    <!-- Metrics --------------------------------------------------------- -->
+    <section class="view" id="view-metrics" hidden>
+      <div class="card-head page-head">
+        <div>
+          <h2 class="page-h2">Metric history</h2>
+          <p class="card-sub" id="metrics-sub">30-second samples, older buckets averaged for longer ranges.</p>
+        </div>
+        <div class="segmented" id="range-metrics" role="group" aria-label="Time range">
+          <button type="button" data-range="1h">1h</button>
+          <button type="button" data-range="24h" class="on">24h</button>
+          <button type="button" data-range="7d">7d</button>
+        </div>
+      </div>
+
+      <div class="chart-grid">
+        <section class="card">
+          <div class="card-head"><div><h2>CPU</h2><p class="card-sub" id="cpu-note">Share of one core used by nginx, the API, cloudflared and the supervisor.</p></div><span class="stat" id="stat-cpu">no data</span></div>
+          <div class="chart-wrap"><canvas id="chart-cpu" role="img" aria-label="CPU load over time"></canvas><p class="chart-empty" hidden>No samples.</p></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><div><h2>Memory</h2><p class="card-sub" id="mem-note">Android memory in use, as a percentage of the device total.</p></div><span class="stat" id="stat-mem">no data</span></div>
+          <div class="chart-wrap"><canvas id="chart-mem" role="img" aria-label="Memory use over time"></canvas><p class="chart-empty" hidden>No samples.</p></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><div><h2>Battery</h2><p class="card-sub">Charge percentage; shaded bands are periods on the charger.</p></div><span class="stat" id="stat-batt">no data</span></div>
+          <div class="chart-wrap"><canvas id="chart-batt" role="img" aria-label="Battery charge over time"></canvas><p class="chart-empty" hidden>No samples.</p></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><div><h2>Storage</h2><p class="card-sub">Free space in the Termux home filesystem.</p></div><span class="stat" id="stat-disk">no data</span></div>
+          <div class="chart-wrap"><canvas id="chart-disk" role="img" aria-label="Free storage over time"></canvas><p class="chart-empty" hidden>No samples.</p></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <div><h2>Health timeline</h2><p class="card-sub" id="timeline-sub-2">Gaps mean no sample was recorded, not that the service was healthy.</p></div>
+        </div>
+        <div class="chart-wrap tall"><canvas id="chart-timeline-metrics" role="img" aria-label="Health timeline"></canvas><p class="chart-empty" hidden>No samples in this range yet.</p></div>
+        <div class="legend" id="legend-timeline-metrics"></div>
+        <div class="events-strip" id="events-metrics"></div>
+      </section>
+    </section>
+
+    <!-- Services -------------------------------------------------------- -->
+    <section class="view" id="view-services" hidden>
+      <section class="card">
+        <div class="card-head">
+          <div><h2 class="page-h2">Services</h2><p class="card-sub">Every control calls the existing serverctl command. Restarts are confirmed and recorded.</p></div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="services-table">
+            <thead><tr><th>Service</th><th>State</th><th class="right">Uptime</th><th class="right">Restarts 24h</th><th class="right">RSS</th><th>Latest error</th><th class="right">Control</th></tr></thead>
+            <tbody><tr><td colspan="7" class="empty">Waiting for the first sample.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="footnote" id="services-note">Restarting the site also restarts this API; the page reconnects on its own.</p>
+      </section>
+
+      <div class="two-col">
+        <section class="card">
+          <div class="card-head"><div><h2>Admin actions</h2><p class="card-sub">Actions that change the server, newest first.</p></div></div>
+          <ul class="event-list" id="audit-list"><li class="empty">No admin actions recorded.</li></ul>
+        </section>
+        <section class="card">
+          <div class="card-head"><div><h2>Danger zone</h2><p class="card-sub">These stop the public URL. The phone has to bring it back.</p></div></div>
+          <div class="action-row">
+            <div><strong>Restart the server</strong><p class="sub">Reloads nginx, restarts the API. Brief outage.</p></div>
+            <button class="btn" type="button" data-action="server-restart" data-phrase="restart">Restart</button>
+          </div>
+          <div class="action-row">
+            <div><strong>Stop the server</strong><p class="sub">Nginx and the API stop. Only <code>serverctl start</code> on the phone recovers this console.</p></div>
+            <button class="btn danger" type="button" data-action="server-stop" data-phrase="stop the console">Stop</button>
+          </div>
+          <div class="action-row">
+            <div><strong>Stop the tunnel</strong><p class="sub">The public hostnames go offline until the tunnel is started again.</p></div>
+            <button class="btn danger" type="button" data-action="tunnel-stop" data-phrase="stop the tunnel">Stop tunnel</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Networking ------------------------------------------------------ -->
+    <section class="view" id="view-networking" hidden>
+      <div class="host-cards" id="host-cards"></div>
+
+      <div class="two-col">
+        <section class="card">
+          <div class="card-head"><div><h2 class="page-h2">Cloudflare Tunnel</h2><p class="card-sub">Connector health straight from cloudflared's own metrics.</p></div></div>
+          <dl class="facts" id="tunnel-facts">
+            <div><dt>State</dt><dd id="tunnel-state">—</dd></div>
+            <div><dt>Connector</dt><dd id="tunnel-id">—</dd></div>
+            <div><dt>Connections</dt><dd id="tunnel-conns">—</dd></div>
+            <div><dt>Requests</dt><dd id="tunnel-requests">—</dd></div>
+            <div><dt>Request errors</dt><dd id="tunnel-errors">—</dd></div>
+            <div><dt>Concurrent</dt><dd id="tunnel-concurrent">—</dd></div>
+            <div><dt>Response codes</dt><dd id="tunnel-codes">—</dd></div>
+            <div><dt>Connector runtime</dt><dd id="tunnel-runtime">—</dd></div>
+          </dl>
+          <div class="btn-row">
+            <button class="btn" type="button" data-action="tunnel-restart" data-phrase="restart the tunnel">Restart tunnel</button>
+            <button class="btn" type="button" data-action="tunnel-start">Start tunnel</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><div><h2>Access rules</h2><p class="card-sub">What the internet can reach, and what needs a session.</p></div></div>
+          <ul class="access-list">
+            <li><span class="tag public">public</span><code>/</code><code>/style.css</code><span class="muted">landing pages</span></li>
+            <li><span class="tag public">public</span><code>/console.css</code><code>/console.js</code><span class="muted">assets, no data</span></li>
+            <li><span class="tag private">session</span><code>/console</code><span class="muted">redirects to sign-in without a cookie</span></li>
+            <li><span class="tag private">session</span><code>/api/status</code><code>/api/timeline</code><code>/api/logs</code><span class="muted">401 without a session</span></li>
+            <li><span class="tag private">session</span><code>/api/action</code><code>/api/settings</code><code>/api/events</code><span class="muted">server-side check on every call</span></li>
+          </ul>
+          <p class="footnote">Sessions last 12 hours and live in memory, so restarting the API signs everyone out.</p>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="card-head"><div><h2>Hostnames</h2><p class="card-sub">Each check is a full HTTPS request from the device through the Cloudflare edge.</p></div></div>
+        <div class="table-wrap">
+          <table class="table" id="host-table">
+            <thead><tr><th>Hostname</th><th>Role</th><th>Last check</th><th class="right">Result</th><th class="right">Latency</th></tr></thead>
+            <tbody><tr><td colspan="5" class="empty">No checks recorded yet.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- Logs ------------------------------------------------------------ -->
+    <section class="view" id="view-logs" hidden>
+      <section class="card">
+        <div class="card-head">
+          <div><h2 class="page-h2">Logs</h2><p class="card-sub">Last 96 kB of each file, filtered on the server. Credentials are redacted before they leave the phone.</p></div>
+        </div>
+        <div class="log-toolbar">
+          <label>Service
+            <select id="log-service">
+              <option value="nginx-error">nginx error</option>
+              <option value="tunnel">cloudflared</option>
+              <option value="supervisor">supervisor</option>
+              <option value="status">status API</option>
+              <option value="auth">sign-in attempts</option>
+            </select>
+          </label>
+          <label>Severity
+            <select id="log-severity">
+              <option value="all">All</option>
+              <option value="error">Errors</option>
+              <option value="crit">Critical</option>
+              <option value="warn">Warnings</option>
+              <option value="info">Info</option>
+            </select>
+          </label>
+          <label class="grow">Search
+            <input id="log-query" type="search" placeholder="text, path, status code" autocomplete="off">
+          </label>
+          <label class="check"><input type="checkbox" id="log-follow" checked> Auto-refresh</label>
+          <button class="btn small" id="log-reload" type="button">Load</button>
+        </div>
+        <p class="log-meta" id="log-meta">Nothing loaded yet.</p>
+        <ol class="log" id="log-lines"><li class="empty">Choose a service and press Load.</li></ol>
+      </section>
+    </section>
+
+    <!-- Terminal -------------------------------------------------------- -->
+    <section class="view" id="view-terminal" aria-labelledby="page-title" hidden>
+      <div id="terminal-lock" class="terminal-lock">
+        <h2>Terminal locked</h2>
+        <p>Enter your terminal password to open the Termux shell.</p>
+        <form id="terminal-login" class="form">
+          <label>Terminal password <input id="terminal-password" type="password" autocomplete="off" required></label>
+          <button class="btn primary" type="submit">Unlock terminal</button>
+        </form>
+        <p class="sub">Commands run as the Termux user, not root.</p>
+      </div>
+      <p id="terminal-status" role="status" aria-live="polite">Terminal locked.</p>
+      <div id="terminal-session" hidden>
+        <div class="terminal-toolbar"><span>Termux shell</span><div class="terminal-tools"><label class="check"><input type="checkbox" id="terminal-a11y"> Screen reader mode (slower)</label><button class="btn small" id="terminal-close" type="button">Lock terminal</button></div></div>
+        <div id="terminal-output" aria-label="Interactive Termux terminal"></div>
+      </div>
+    </section>
+
+    <!-- Settings -------------------------------------------------------- -->
+    <section class="view" id="view-settings" hidden>
+      <div class="two-col">
+        <section class="card">
+          <div class="card-head"><div><h2 class="page-h2">HTTPS checks</h2><p class="card-sub">External monitoring is not configured. Hostname checks run from the phone and cannot confirm availability from outside the network.</p></div></div>
+          <form id="probe-form" class="form">
+            <label class="check"><input type="checkbox" id="probe-hosts"> Check both hostnames every two minutes</label>
+            <button class="btn primary" type="submit">Save probe settings</button>
+            <p class="form-note" id="probe-note">With no probe configured, public HTTPS shows as Not monitored.</p>
+          </form>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><div><h2>Storage</h2><p class="card-sub">SQLite, bounded by retention rather than by luck.</p></div></div>
+          <dl class="facts" id="storage-facts">
+            <div><dt>Database</dt><dd id="db-path">—</dd></div>
+            <div><dt>Size</dt><dd id="db-size">—</dd></div>
+            <div><dt>Samples</dt><dd id="db-samples">—</dd></div>
+            <div><dt>Raw retention</dt><dd id="db-retention">—</dd></div>
+            <div><dt>Sample interval</dt><dd id="db-interval">—</dd></div>
+            <div><dt>Session lifetime</dt><dd id="db-session">—</dd></div>
+          </dl>
+          <p class="footnote">Events and audit rows are kept for 30 days.</p>
+        </section>
+      </div>
+
+      <div class="two-col">
+        <section class="card">
+          <div class="card-head"><div><h2>Audit log</h2><p class="card-sub">Sign-ins, settings changes and controls, with their outcome.</p></div></div>
+          <ul class="event-list" id="settings-audit"><li class="empty">Nothing yet.</li></ul>
+        </section>
+        <section class="card">
+          <div class="card-head"><div><h2>Build</h2><p class="card-sub">What is running on the phone.</p></div></div>
+          <dl class="facts" id="build-facts">
+            <div><dt>Device</dt><dd id="build-device">—</dd></div>
+            <div><dt>Android</dt><dd id="build-android">—</dd></div>
+            <div><dt>Kernel</dt><dd id="build-kernel">—</dd></div>
+            <div><dt>Python</dt><dd id="build-python">—</dd></div>
+            <div><dt>nginx</dt><dd id="build-nginx">—</dd></div>
+            <div><dt>cloudflared</dt><dd id="build-cloudflared">—</dd></div>
+          </dl>
+          <div class="btn-row"><a class="btn" href="/logout">Sign out</a></div>
+        </section>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<dialog id="confirm-dialog" aria-labelledby="confirm-title">
+  <form method="dialog" class="confirm-form">
+    <h2 id="confirm-title">Confirm</h2>
+    <p id="confirm-body"></p>
+    <label id="confirm-phrase-wrap" hidden>Type <code id="confirm-phrase"></code> to continue
+      <input id="confirm-input" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <div class="btn-row end">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn danger" value="confirm" id="confirm-go">Confirm</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="/vendor/xterm.js" defer></script>
+<script src="/vendor/addon-fit.js" defer></script>
+<script src="console.js?v=10" defer></script>
+</body>
+</html>

@@ -2,8 +2,9 @@
 # Keeps the local server alive for as long as this process runs.
 # Android reclaims cached app processes; a wake lock plus the battery
 # whitelist in the README are what stop Termux and its children being killed.
-# The health check goes straight to the status service: the site port now
-# requires basic auth, and a 401 would look like an outage.
+# The health check goes straight to the status service on a loopback-only
+# endpoint: the public paths need a session cookie and a 401 would look like an
+# outage.
 set -u
 base="$HOME/galaxy-server"
 mkdir -p "$base/run" "$base/log"
@@ -25,7 +26,7 @@ echo "$(date -Is) supervisor started (pid $$)"
 while :; do
   # server-disabled is set by "serverctl stop" and by the dashboard's Stop button.
   if [ ! -e "$base/run/server-disabled" ] \
-     && ! curl -fsS --max-time 5 http://127.0.0.1:8765/api/status >/dev/null 2>&1; then
+     && ! curl -fsS --max-time 5 http://127.0.0.1:8765/api/health >/dev/null 2>&1; then
     echo "$(date -Is) server unhealthy; starting"
     "$base/serverctl" start
   fi
@@ -37,5 +38,8 @@ while :; do
     nohup cloudflared tunnel run --token-file "$HOME/.cloudflared/galaxy-token" \
       >> "$base/log/tunnel.log" 2>&1 < /dev/null &
   fi
-  sleep 60
+  if [ -e "$base/run/autodeploy-enabled" ]; then
+    python "$base/autodeploy.py" >> "$base/log/deploy.log" 2>&1
+  fi
+  sleep 15
 done
