@@ -1,8 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# Starts, stops and restarts the site. The nginx config is generated here so the
+# basic-auth requirements and the proxy routes stay in one place.
 set -eu
 base="$HOME/galaxy-server"
 mkdir -p "$base/run" "$base/log"
 config="$base/run/nginx.conf"
+passfile="$base/run/htpasswd"
+token="$HOME/.cloudflared/galaxy-token"
+
 make_config() {
   cat > "$config" <<EOF
 worker_processes 1;
@@ -17,24 +22,47 @@ http {
   sendfile on;
   server {
     listen 8080;
-    allow 127.0.0.1;
-    allow 192.168.0.0/24;
-    deny all;
+    # This server is published on the internet through the Cloudflare tunnel,
+    # so every path including the API needs the password.
+    auth_basic "Galaxy server";
+    auth_basic_user_file $passfile;
     root $base/site;
     index index.html;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy no-referrer always;
     location /api/status { proxy_pass http://127.0.0.1:8765; }
+    location /api/logs { proxy_pass http://127.0.0.1:8765; }
+    location /api/action {
+      limit_except POST { deny all; }
+      proxy_pass http://127.0.0.1:8765;
+    }
   }
 }
 EOF
 }
-start() {
+
+start_status() {
   if ! kill -0 "$(cat "$base/run/status.pid" 2>/dev/null || echo 0)" 2>/dev/null || [ ! -s "$base/run/status.pid" ]; then
     nohup python "$base/status.py" >> "$base/log/status.log" 2>&1 &
     echo $! > "$base/run/status.pid"
   fi
+}
+
+stop_status() {
+  if [ -s "$base/run/status.pid" ]; then
+    kill "$(cat "$base/run/status.pid")" 2>/dev/null || true
+    rm -f "$base/run/status.pid"
+  fi
+}
+
+start() {
+  rm -f "$base/run/server-disabled"
+  if [ ! -s "$passfile" ]; then
+    echo "no dashboard password set; run: $0 passwd" >&2
+    return 1
+  fi
+  start_status
   make_config
   nginx -t -c "$config"
   if [ -s "$base/run/nginx.pid" ] && kill -0 "$(cat "$base/run/nginx.pid")" 2>/dev/null; then
@@ -43,9 +71,52 @@ start() {
     nginx -c "$config"
   fi
 }
+
+stop() {
+  touch "$base/run/server-disabled"
+  if [ -s "$base/run/nginx.pid" ]; then nginx -c "$config" -s quit; fi
+  if [ -s "$base/run/status.pid" ]; then kill "$(cat "$base/run/status.pid")" 2>/dev/null || true; rm -f "$base/run/status.pid"; fi
+}
+
+passwd() {
+  printf 'user: ' >&2
+  read -r user
+  [ -n "$user" ] || { echo "empty user" >&2; return 1; }
+  printf 'password: ' >&2
+  stty -echo
+  read -r secret
+  stty echo
+  printf '\n' >&2
+  [ -n "$secret" ] || { echo "empty password" >&2; return 1; }
+  hash=$(printf '%s' "$secret" | python -c 'import base64,hashlib,sys;print("{SHA}" + base64.b64encode(hashlib.sha1(sys.stdin.buffer.read()).digest()).decode())')
+  printf '%s:%s\n' "$user" "$hash" > "$passfile"
+  chmod 600 "$passfile"
+  echo "password set for $user"
+  if [ -s "$base/run/nginx.pid" ]; then nginx -c "$config" -s reload; fi
+}
+
+tunnel_start() {
+  rm -f "$base/run/tunnel-disabled"
+  if [ ! -s "$token" ]; then echo "no tunnel token at ~/.cloudflared/galaxy-token" >&2; return 1; fi
+  if pgrep -f 'cloudflared tunnel run' >/dev/null 2>&1; then echo "tunnel already running"; return 0; fi
+  nohup cloudflared tunnel run --token-file "$token" >> "$base/log/tunnel.log" 2>&1 < /dev/null &
+  echo "tunnel starting"
+}
+
+tunnel_stop() {
+  touch "$base/run/tunnel-disabled"
+  pkill -f 'cloudflared tunnel run' 2>/dev/null || true
+  echo "tunnel stopped and will not be restarted until enabled"
+}
+
 case "${1:-}" in
-  start|restart) start ;;
-  stop) if [ -s "$base/run/nginx.pid" ]; then nginx -c "$config" -s quit; fi; if [ -s "$base/run/status.pid" ]; then kill "$(cat "$base/run/status.pid")" 2>/dev/null || true; rm -f "$base/run/status.pid"; fi ;;
-  status) curl -fsS http://127.0.0.1:8080/api/status; echo ;;
-  *) echo "Usage: $0 {start|restart|stop|status}"; exit 2 ;;
+  start) start ;;
+  restart) stop_status; start ;;
+  stop) stop ;;
+  passwd) passwd ;;
+  tunnel-start) tunnel_start ;;
+  tunnel-stop) tunnel_stop ;;
+  tunnel-restart) tunnel_stop; sleep 1; tunnel_start ;;
+  status) curl -fsS http://127.0.0.1:8765/api/status; echo ;;
+  *) echo "Usage: $0 {start|restart|stop|passwd|tunnel-start|tunnel-stop|tunnel-restart|status}"; exit 2 ;;
 esac

@@ -3,14 +3,15 @@ set -eu
 cd "$(dirname "$0")"
 pkg update -y
 pkg upgrade -y
-pkg install -y python git nginx curl
+pkg install -y python git nginx curl termux-api
 mkdir -p "$HOME/.termux/boot" "$HOME/galaxy-server/run" "$HOME/galaxy-server/log"
-cp -R site status.py serverctl "$HOME/galaxy-server/"
-chmod 700 "$HOME/galaxy-server/serverctl"
+cp -R site status.py serverctl supervise.sh "$HOME/galaxy-server/"
+chmod 700 "$HOME/galaxy-server/serverctl" "$HOME/galaxy-server/supervise.sh"
 cat > "$HOME/.termux/boot/galaxy-server" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 sleep 30
-"$HOME/galaxy-server/serverctl" start
+nohup "$HOME/galaxy-server/supervise.sh" >> "$HOME/galaxy-server/log/supervisor.log" 2>&1 < /dev/null &
 EOF
 chmod 700 "$HOME/.termux/boot/galaxy-server"
 "$HOME/galaxy-server/serverctl" start
+nohup "$HOME/galaxy-server/supervise.sh" >> "$HOME/galaxy-server/log/supervisor.log" 2>&1 < /dev/null &

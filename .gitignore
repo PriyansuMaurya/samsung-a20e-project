@@ -2,3 +2,8 @@
 *.apk
 __pycache__/
 *.py[cod]
+# Cloudflare tunnel token staged locally for transfer to the phone.
+.tunnel-token
+# Dashboard basic-auth password and its htpasswd line, kept out of git.
+.dashboard-password
+.dashboard-htpasswd
