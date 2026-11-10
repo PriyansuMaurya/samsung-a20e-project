@@ -1,6 +1,57 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Galaxy server</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23C3F451'/%3E%3Crect x='10' y='10' width='12' height='12' rx='4' fill='%23070A0E'/%3E%3C/svg%3E"><meta name="description" content="A small home server running on a Samsung Galaxy A20e, published over Cloudflare Tunnel."><link rel="stylesheet" href="style.css?v=7"></head>
-<body><main><header><a class="brand" href="#home"><span class="mark">✳</span> GALAXY <small> / HOME SERVER</small></a><nav><a href="#console">Console</a><a href="#about">About</a></nav></header>
-<section class="hero" id="home"><div><div class="eyebrow"><span class="dot"></span> YOUR LITTLE CORNER OF THE NETWORK</div><h1>Small device.<br><em>Big possibilities.</em></h1><p>A quiet home for your projects, powered by a Galaxy A20e. Built to stay simple, useful, and close to home.</p><a class="button" href="#console">Open the console <span>↗</span></a></div><div class="orbit" aria-hidden="true"><div class="planet">✳</div><span>LOCAL BY DESIGN</span></div></section>
-<section id="console"><div class="section-head"><div><div class="eyebrow">THE VIEW FROM HERE</div><h2>Operations console<span>.</span></h2></div><p>Sign-in required. The landing pages stay public.</p></div><div class="cards"><article><div class="label">DEVICE</div><strong>Galaxy A20e</strong><p>Android 11 · Termux</p></article><article><div class="label">SERVICES</div><strong>Four</strong><p>nginx, status API, supervisor, cloudflared</p></article><article><div class="label">REACH</div><strong>Two hostnames</strong><p>galaxy.maurya.ie · small.maurya.ie</p></article><article><div class="label">CONSOLE</div><strong><a class="button small" href="/console">Sign in</a></strong><p>Live status, 24h history, logs, controls</p></article></div></section>
-<section id="about" class="about"><div><div class="eyebrow">A SERVER WITH A SECOND LIFE</div><h2>Made for<br><em>the everyday.</em></h2></div><div><p>This site lives on an Android phone on your local network. It’s a small, efficient place to experiment and build.</p><dl><div><dt>DEVICE</dt><dd>Samsung Galaxy A20e</dd></div><div><dt>PLATFORM</dt><dd>Android 11 · Termux</dd></div><div><dt>ACCESS</dt><dd>Public via Cloudflare Tunnel</dd></div></dl></div></section><footer><span>✳ &nbsp; GALAXY HOME SERVER</span><span>MADE TO DO MORE WITH LESS</span></footer></main></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Priyanshu Maurya — The Engineer and His Creations (1994)</title>
+<meta name="description" content="Priyanshu Maurya, engineer in Galway, Ireland. Talking to servers so you don’t have to.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000000'/%3E%3Cpath d='M16 4l3.6 7.3 8.1 1.2-5.9 5.7 1.4 8-7.2-3.8-7.2 3.8 1.4-8L4.3 12.5l8.1-1.2z' fill='%23ffe600'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css?v=9">
+</head>
+<body>
+
+<main class="card">
+  <h1>Priyanshu Maurya — The Engineer and His Creations <span>(1994)</span></h1>
+  <p class="tagline">Talking to servers so you don’t have to.</p>
+
+  <div class="rainbow" aria-hidden="true"></div>
+
+  <div class="intro">
+    <img class="portrait" src="portrait.svg" width="300" height="360" alt="Stylised portrait illustration of Priyanshu Maurya">
+    <div class="about">
+      <p>Hello. I am <strong>Priyanshu Maurya</strong>, an engineer in Galway, Ireland. I build small, useful things for the web — APIs, interfaces, deployment pipelines — and I keep them running on hardware that was never meant to run them.</p>
+      <p>This page is served from a Samsung Galaxy A20e in my flat. It is small, it is warm, and it has opinions.</p>
+      <p class="links"><a href="https://github.com/PriyansuMaurya">GitHub</a> · <a href="https://maurya.ie">maurya.ie</a> · <a href="/console">Console</a></p>
+    </div>
+  </div>
+
+  <div class="rainbow" aria-hidden="true"></div>
+
+  <footer>
+    <p>You are visitor <span class="counter" id="visitor-count">0001208</span></p>
+    <p><strong>Last updated: November 2026</strong> · © 1994–2026 Priyanshu Maurya</p>
+  </footer>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  // No server-side counter and no access log, so the number lives in this
+  // browser: it starts at 1207 and increments once per visit.
+  var countEl = document.getElementById('visitor-count');
+  if (!countEl) { return; }
+  var n = 1207;
+  try {
+    var stored = parseInt(window.localStorage.getItem('pm-visits'), 10);
+    if (!isNaN(stored) && stored >= 1207 && stored < 9999999) { n = stored; }
+    n += 1;
+    window.localStorage.setItem('pm-visits', String(n));
+    countEl.textContent = ('0000000' + n).slice(-7);
+  } catch (e) {
+    countEl.textContent = '0001208';
+  }
+})();
+</script>
+</body>
+</html>

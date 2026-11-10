@@ -36,7 +36,7 @@ small.maurya.ie   A  104.21.40.201, 172.67.138.145   (Cloudflare edge, proxied)
 galaxy.maurya.ie  A  104.21.40.201, 172.67.138.145   (Cloudflare edge, proxied)
 ```
 
-- `curl https://small.maurya.ie/` returns HTTP 200 and the real page (`GALAXY`, `Small device`, `Big possibilities`).
+- `curl https://small.maurya.ie/` returns HTTP 200 and the real page (`Priyanshu Maurya`, `The Engineer and His Creations`).
 - `curl https://small.maurya.ie/api/status` returns live data: `{"uptime": "0d 2h", "memory_percent": 60, "storage_gb": 16.2}`.
 - Independent HTTP checks from **three external nodes** (Austria, Canada, Russia) all returned `200 OK` against the Cloudflare addresses, so this is confirmed from outside the home network, not just from the LAN.
 
