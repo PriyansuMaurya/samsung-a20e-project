@@ -41,7 +41,7 @@ class RequestDeployTest(unittest.TestCase):
             calls.append(args)
             raise http_error(502, b'error code: 502')
 
-        with self.assertRaises(RuntimeError) as raised:
+        with patch('builtins.print'), self.assertRaises(RuntimeError) as raised:
             self.run_main(urlopen, sleeps)
         message = str(raised.exception)
         self.assertIn('502', message)
