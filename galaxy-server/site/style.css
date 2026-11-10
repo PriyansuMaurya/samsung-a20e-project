@@ -27,11 +27,13 @@ body {
 
 a { color: #0000ee; text-decoration: underline; }
 a:visited { color: #551a8b; }
-a:hover { background: #0000ee; color: #ffffff; text-decoration: none; }
+a:hover { background: #e6f0ff; color: #0000ee; text-decoration: underline; text-underline-offset: 3px; }
+a:hover strong { color: #0000ee; }
 a:active { color: #ee0000; }
 a:focus-visible {
-  outline: 2px solid #0000ee;
-  outline-offset: 1px;
+  outline: 3px solid #0000ee;
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 /* ---------- Header ---------- */
@@ -99,13 +101,7 @@ h1 span { white-space: nowrap; }
 
 .links { letter-spacing: 0.02em; }
 
-/* ---------- Footer ---------- */
-
-footer {
-  text-align: center;
-  font-size: 10px;
-  color: #444444;
-}
+/* ---------- Footer ---------- */footer { text-align: center; font-size: clamp(11px, 1.2vw, 13px); color: #444444; padding-top: 16px; border-top: 1px solid #eee; }
 footer p { margin: 0 0 4px; }
 footer p:last-child { margin-bottom: 0; }
 
