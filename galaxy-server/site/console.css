@@ -338,7 +338,7 @@ body.terminal-view main {
 }
 .icon-btn:hover { border-color: var(--line-soft); background: var(--panel-hover); }
 
-main { padding: 20px 24px 56px; max-width: 1440px; }
+main { padding: 20px 24px 56px; }
 .view[hidden] { display: none; }
 
 /* ------------------------------------------------------------ components */
