@@ -94,7 +94,7 @@ Screen reader mode is off by default to keep large terminal output responsive. E
 
 Switching between dashboard views keeps every terminal shell and its output stream alive, including commands running while another view is open. Returning to Terminal restores the output and fits the active shell to the visible view. **+ New shell** opens up to four shells, each with its own tab, stream and scrollback; **Close shell** ends the tab you are on.
 
-A browser reload reattaches to the shells the page had open, without asking for the terminal password again: the page remembers the shell ids for that browser tab and the server replays recent output for the redraw. A shell that is opened after a reload asks for the password once, and it is kept in memory only. Shells the page never reattaches to close after two minutes; any shell also closes after ten minutes without input. Dashboard navigation also preserves log filters, the auto-refresh choice, chart range, unsaved probe settings and each view's scroll position.
+A browser reload reattaches to the shells the page had open, without asking for the terminal password again: the page remembers the shell ids for that browser tab and the server replays recent output for the redraw. A shell that is opened after a reload asks for the password once, and it is kept in memory only. A dropped output stream reattaches on its own rather than closing the tab, so a tunnel blip does not cost the session. Shells close after ten minutes without input, whether or not the page is still attached. Dashboard navigation also preserves log filters, the auto-refresh choice, chart range, unsaved probe settings and each view's scroll position.
 
 ## Console and control API
 

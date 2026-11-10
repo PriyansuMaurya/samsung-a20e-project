@@ -155,6 +155,18 @@ test('reload reattaches to open shells and extra shells get their own tab', asyn
     assert.equal(await page.locator('#terminal-tabs [data-terminal]').count(), 2);
     assert.equal(await page.locator('#terminal-tabs [data-terminal][aria-selected="true"]').getAttribute('data-terminal'), 'shell-2');
     assert.equal(calls.filter(call => call.path === '/api/terminal/open').length, 2);
+
+    // A dropped stream is not a closed shell: the tab keeps its id, the page
+    // reattaches on its own, and a further reload still finds both shells.
+    await page.evaluate(() => window.streams[0].onerror());
+    await page.waitForFunction(() => window.streams.length === 3);
+    assert.equal(await page.locator('#terminal-tabs [data-terminal]').count(), 2);
+    assert.equal(await page.locator('#terminal-lock').isHidden(), true);
+    assert.match(await page.evaluate(() => window.streams[window.streams.length - 1].url), /id=shell-1/);
+    await page.reload();
+    await page.locator('#terminal-session').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#terminal-tabs [data-terminal]').count(), 2);
+    assert.equal(await page.locator('#terminal-lock').isHidden(), true);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

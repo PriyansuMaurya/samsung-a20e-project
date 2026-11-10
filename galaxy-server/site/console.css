@@ -98,6 +98,7 @@ body.terminal-view main {
 .terminal-lock { width: min(100%, 420px); margin: auto; padding: 24px; }
 .terminal-lock > p { color: var(--muted); margin-top: 8px; }
 .terminal-lock .form { margin: 20px 0; }
+#terminal-login[hidden], #terminal-reconnecting[hidden] { display: none; }
 #terminal-session:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 16px; background: var(--raised); border-bottom: 1px solid var(--line); color: var(--muted); }
 .terminal-tools { display: flex; align-items: center; gap: 14px; margin-left: auto; }

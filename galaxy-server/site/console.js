@@ -953,9 +953,42 @@
     }
   }
 
+  function stopTerminalStream(tab) {
+    if (tab.stream) { tab.stream.close(); tab.stream = null; }
+    clearTimeout(tab.retry);
+    tab.retry = null;
+  }
+
+  // The pty lives on the server, not in the socket: a dropped stream is a
+  // temporary state, so ask whether the shell is still there and reattach
+  // instead of forgetting the tab. Forgetting it also lost the shell id, which
+  // is what made the next reload fall back to the password form.
+  function reattachStream(tab) {
+    var id = tab.id;
+    if (!id || tab.retry) { return; }
+    var delay = Math.min(600 * Math.max(tab.offline || 1, 1), 10000);
+    tab.retry = setTimeout(function () {
+      tab.retry = null;
+      if (tab.id !== id) { return; }
+      api('/api/terminal/list').then(function (data) {
+        if (tab.id !== id) { return; }
+        var alive = (data.terminals || []).some(function (item) { return item.id === id; });
+        if (!alive) {
+          dropTerminal(tab, false);
+          toast('Terminal session ended', 'error');
+          return;
+        }
+        // A fresh attach replays the server's whole buffer, so clear the screen
+        // first or that replay doubles the text already on it.
+        if (tab.emulator) { tab.emulator.reset(); }
+        startTerminalStream(tab);
+      }).catch(function () { reattachStream(tab); });
+    }, delay);
+  }
+
   function startTerminalStream(tab) {
     if (!tab.id) { return; }
-    if (tab.stream) { tab.stream.close(); }
+    stopTerminalStream(tab);
     var id = tab.id;
     // One long-lived stream carries shell output, so echo does not wait for a
     // poll tick plus a round trip. The server replays recent output first.
@@ -968,11 +1001,13 @@
       for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
       tab.emulator.write(bytes);
     };
+    stream.onopen = function () { if (tab.id === id) { tab.offline = 0; } };
     stream.onerror = function () {
+      if (tab.id !== id || tab.stream !== stream) { return; }
       stream.close();
-      if (tab.id !== id) { return; }
-      dropTerminal(tab, false);
-      toast('Terminal disconnected: connection closed', 'error');
+      tab.stream = null;
+      tab.offline = (tab.offline || 0) + 1;
+      reattachStream(tab);
     };
   }
 
@@ -990,8 +1025,14 @@
     }).catch(function (error) {
       tab.sending = false;
       if (tab.id !== id) { return; }
-      dropTerminal(tab, false);
-      toast('Terminal disconnected: ' + error.message, 'error');
+      if (/closed|ended/i.test(error.message)) {
+        dropTerminal(tab, false);
+        toast('Terminal session ended', 'error');
+        return;
+      }
+      // The shell outlives a failed write, so the tab stays; the stream retry
+      // above reattaches and the missing keystrokes are not worth losing it.
+      toast('Terminal: ' + error.message, 'error');
     });
   }
 
@@ -1018,7 +1059,7 @@
     var id = tab.id;
     terminals.splice(index, 1);
     tab.id = null;
-    if (tab.stream) { tab.stream.close(); tab.stream = null; }
+    stopTerminalStream(tab);
     if (tab.emulator) { tab.emulator.dispose(); tab.emulator = null; }
     if (tab.pane && tab.pane.parentNode) { tab.pane.parentNode.removeChild(tab.pane); }
     rememberTabs();
@@ -1063,11 +1104,20 @@
     $('#shell-password').focus();
   }
 
+  // While the page asks which shells are still alive, do not show the password
+  // form: to someone who was already unlocked a reload must not look like a
+  // logout.
+  function setRestoring(on) {
+    $('#terminal-login').hidden = on;
+    $('#terminal-reconnecting').hidden = !on;
+  }
+
   // Reattach after a reload: sessionStorage names the shells this tab had, and
   // the server confirms which are still alive before any stream opens.
   function restoreTerminals() {
     var saved = savedTabs();
     if (!saved.tabs.length) { return; }
+    setRestoring(true);
     api('/api/terminal/list').then(function (data) {
       var live = {};
       (data.terminals || []).forEach(function (item) { live[item.id] = true; });
@@ -1085,7 +1135,9 @@
       if (!terminals.length) { return; }
       var reopen = terminals.filter(function (tab) { return tab.id === saved.active; })[0];
       activate((reopen || terminals[0]).id);
-    }).catch(function (error) { toast('Terminal: ' + error.message, 'error'); });
+    }).catch(function (error) {
+      toast('Terminal: ' + error.message, 'error');
+    }).then(function () { setRestoring(false); });
   }
 
   // ------------------------------------------------------------------ data

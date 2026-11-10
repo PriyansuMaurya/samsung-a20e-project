@@ -101,7 +101,9 @@ TERMINAL_IDLE_SECONDS = 600
 # Shells are cheap to start and expensive to keep: cap them per signed-in
 # browser, and give a reloaded page time to reattach before reaping.
 TERMINAL_MAX = 4
-TERMINAL_DETACH_SECONDS = 120
+# A shell whose page goes away - a reload, a phone screen off, a tunnel blip -
+# is kept for as long as an idle one, so coming back finds it still there.
+TERMINAL_DETACH_SECONDS = 600
 # Recent output is kept so a reloaded or second tab can redraw the screen.
 TERMINAL_BUFFER = 32768
 
