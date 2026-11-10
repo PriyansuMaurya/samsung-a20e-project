@@ -90,3 +90,73 @@ test('navigation preserves the terminal, filters, drafts and scroll positions', 
     await browser.close();
   }
 });
+
+test('reload reattaches to open shells and extra shells get their own tab', async () => {
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const calls = [];
+    const shells = [];
+    await page.addInitScript(() => {
+      window.streams = [];
+      window.EventSource = class {
+        constructor(url) { this.url = url; this.closed = false; window.streams.push(this); }
+        close() { this.closed = true; }
+      };
+    });
+    await page.route('http://console.test/**', async route => {
+      const url = new URL(route.request().url());
+      const reply = data => route.fulfill({ json: data });
+      if (url.pathname.startsWith('/api/')) {
+        calls.push({ path: url.pathname, body: route.request().postDataJSON() });
+        if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
+        if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
+        if (url.pathname === '/api/events') { return reply({ audits: [] }); }
+        if (url.pathname === '/api/timeline') { return reply({ points: [], events: [] }); }
+        if (url.pathname === '/api/logs') { return reply({ lines: [], matched: 0, total: 0, sizes_kb: {} }); }
+        // Shells live on the server, so a reload still finds them listed.
+        if (url.pathname === '/api/terminal/list') {
+          return reply({ terminals: shells.map((id, index) => ({ id, created: index })) });
+        }
+        if (url.pathname === '/api/terminal/open') {
+          const id = 'shell-' + (shells.length + 1);
+          shells.push(id);
+          return reply({ id });
+        }
+        return reply({});
+      }
+      const file = url.pathname === '/console' ? 'console.html' : url.pathname.slice(1);
+      const body = await readFile(path.join(__dirname, 'site', file));
+      return route.fulfill({ body, contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
+
+    await page.goto('http://console.test/console#/terminal');
+    await page.locator('#terminal-password').fill('test-password');
+    await page.locator('#terminal-login button').click();
+    await page.waitForFunction(() => window.streams.length === 1);
+    await page.waitForFunction(() => document.querySelectorAll('#terminal-tabs [data-terminal]').length === 1);
+
+    // A second shell gets its own tab, its own stream and its own server id.
+    await page.locator('#terminal-new').click();
+    await page.waitForFunction(() => window.streams.length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('#terminal-tabs [data-terminal]').length === 2);
+    const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#terminal-tabs [data-terminal]')).map(tab => tab.dataset.terminal));
+    assert.deepEqual(ids, ['shell-1', 'shell-2']);
+    assert.equal(await page.locator('#terminal-tabs [data-terminal][aria-selected="true"]').getAttribute('data-terminal'), 'shell-2');
+
+    // Reload: the page must not ask for the password again, must not open a
+    // new shell, and must reattach to the two shells still on the server.
+    await page.reload();
+    await page.locator('#terminal-session').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => window.streams.length === 2);
+    assert.equal(await page.locator('#terminal-lock').isHidden(), true);
+    assert.equal(await page.locator('#terminal-tabs [data-terminal]').count(), 2);
+    assert.equal(await page.locator('#terminal-tabs [data-terminal][aria-selected="true"]').getAttribute('data-terminal'), 'shell-2');
+    assert.equal(calls.filter(call => call.path === '/api/terminal/open').length, 2);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

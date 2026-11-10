@@ -98,6 +98,12 @@ TERMINALS = {}
 TERMINAL_FAILS = []
 TERMINAL_LOCK = threading.RLock()
 TERMINAL_IDLE_SECONDS = 600
+# Shells are cheap to start and expensive to keep: cap them per signed-in
+# browser, and give a reloaded page time to reattach before reaping.
+TERMINAL_MAX = 4
+TERMINAL_DETACH_SECONDS = 120
+# Recent output is kept so a reloaded or second tab can redraw the screen.
+TERMINAL_BUFFER = 32768
 
 
 # --------------------------------------------------------------------------- #
@@ -1079,9 +1085,12 @@ def start_terminal(owner):
         os.close(slave)
     os.set_blocking(master, False)
     token = secrets.token_urlsafe(24)
+    now = time.monotonic()
     with TERMINAL_LOCK:
         TERMINALS[token] = {'owner': owner, 'fd': master, 'process': process,
-                            'last_activity': time.monotonic(), 'user': None}
+                            'last_activity': now, 'user': None,
+                            'buffer': bytearray(), 'detached_at': now,
+                            'created': time.time(), 'stream': None}
     return token
 
 
@@ -1095,11 +1104,16 @@ def terminal_for(token, owner):
 
 def read_terminal(terminal):
     try:
-        return os.read(terminal['fd'], 16384)
-    except BlockingIOError:
+        chunk = os.read(terminal['fd'], 16384)
+    except (BlockingIOError, OSError):
         return b''
-    except OSError:
-        return b''
+    if chunk:
+        buffer = terminal.setdefault('buffer', bytearray())
+        buffer.extend(chunk)
+        overflow = len(buffer) - TERMINAL_BUFFER
+        if overflow > 0:
+            del buffer[:overflow]
+    return chunk
 
 
 def close_terminal(token, owner):
@@ -1123,8 +1137,12 @@ def reap_terminals():
     while True:
         time.sleep(15)
         with TERMINAL_LOCK:
+            now = time.monotonic()
             for token, terminal in list(TERMINALS.items()):
-                if terminal['process'].poll() is not None or time.monotonic() - terminal['last_activity'] > TERMINAL_IDLE_SECONDS:
+                detached = terminal.get('detached_at')
+                if (terminal['process'].poll() is not None
+                        or now - terminal['last_activity'] > TERMINAL_IDLE_SECONDS
+                        or (detached is not None and now - detached > TERMINAL_DETACH_SECONDS)):
                     close_terminal(token, terminal['owner'])
 
 
@@ -1299,6 +1317,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(404, {'error': 'Terminal session is closed'})
                 return
             terminal['stream'] = marker
+            terminal['detached_at'] = None
+            # A fresh page has an empty xterm; replay what it missed. Each
+            # attach gets the whole buffer, so tabs never steal each other's
+            # scrollback.
+            backlog = bytes(terminal.get('buffer') or b'')
         self.close_connection = True
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
@@ -1309,6 +1332,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         last_write = time.monotonic()
         try:
             self.wfile.write(b': open\n\n')
+            if backlog:
+                self.wfile.write(b'data: ' + base64.b64encode(backlog) + b'\n\n')
             self.wfile.flush()
             while True:
                 with TERMINAL_LOCK:
@@ -1317,6 +1342,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             or not hmac.compare_digest(terminal['owner'], owner)):
                         break
                     chunk = read_terminal(terminal)
+                    if chunk:
+                        terminal['last_activity'] = time.monotonic()
                     ended = terminal['process'].poll() is not None
                 now = time.monotonic()
                 if chunk:
@@ -1339,10 +1366,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 terminal = TERMINALS.get(token)
                 if terminal is not None and terminal.get('stream') is marker:
                     terminal['stream'] = None
+                    terminal['detached_at'] = time.monotonic()
 
     def _api_get(self, path, query):
         if path == '/api/terminal/stream':
             self._stream_terminal(query)
+            return
+        if path == '/api/terminal/list':
+            _user, owner = session_user(self)
+            if not owner:
+                self._json(401, {'error': 'sign in required'})
+                return
+            with TERMINAL_LOCK:
+                terminals = sorted(
+                    ({'id': token, 'created': terminal['created']}
+                     for token, terminal in TERMINALS.items()
+                     if hmac.compare_digest(terminal['owner'], owner)),
+                    key=lambda item: item['created'])
+            self._json(200, {'terminals': terminals})
             return
         if path == '/api/status':
             try:
@@ -1542,8 +1583,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         add_audit(user, 'terminal', 'failed', 'incorrect terminal password')
                         self._json(403, {'error': 'Incorrect terminal password'})
                         return
-                    if TERMINALS:
-                        self._json(409, {'error': 'A terminal session is already open'})
+                    mine = [t for t in TERMINALS.values()
+                            if hmac.compare_digest(t['owner'], owner)]
+                    if len(mine) >= TERMINAL_MAX:
+                        self._json(409, {'error': 'Too many terminal sessions open (%d max)' % TERMINAL_MAX})
                         return
                     try:
                         terminal_id = start_terminal(owner)

@@ -138,8 +138,12 @@
     // dashboard session, rather than the currently visible navigation item.
     window.scrollTo(0, state.scrollPositions[route] || 0);
     scheduleLogs();
-    if (route === 'terminal' && terminalId) {
-      window.requestAnimationFrame(fitTerminal);
+    if (route === 'terminal' && activeTerminal) {
+      window.requestAnimationFrame(function () {
+        if (!activeTerminal) { return; }
+        fitTerminal();
+        activeTerminal.emulator.focus();
+      });
     }
     if (route === 'metrics') { renderCharts(); }
     if (route === 'logs') { loadLogs(); }
@@ -842,13 +846,14 @@
   }
 
   // xterm renders the PTY stream; session authentication remains server-side.
-  var terminalId = null;
-  var terminalStream = null;
-  var terminalEmulator = null;
-  var terminalFit = null;
-  var terminalPending = '';
-  var terminalSending = false;
-  var terminalResize = Promise.resolve();
+  // Each tab owns one shell. Their ids are kept in sessionStorage so a reload
+  // can reattach to the same shells instead of opening new ones, and the server
+  // keeps a little scrollback for that redraw.
+  var terminals = [];
+  var activeTerminal = null;
+  var terminalSecret = '';
+  var TABS_KEY = 'galaxy-terminal-tabs';
+  var TERMINAL_MAX = 4;
 
   // xterm's screen-reader mode keeps a parallel DOM copy of the buffer, which is
   // the accessible path but much slower to render on large output. It stays off
@@ -861,71 +866,226 @@
   function terminalRequest(path, body) {
     return api('/api/terminal/' + path, { method: 'POST', body: JSON.stringify(body) });
   }
-  function closeTerminal() {
-    var id = terminalId;
-    terminalId = null;
-    terminalPending = '';
-    terminalSending = false;
-    if (terminalStream) { terminalStream.close(); terminalStream = null; }
-    if (terminalEmulator) { terminalEmulator.dispose(); terminalEmulator = null; terminalFit = null; }
-    $('#terminal-session').hidden = true;
-    $('#terminal-lock').hidden = false;
-    $('#terminal-status').textContent = 'Terminal locked.';
-    if (state.route === 'terminal') { $('#terminal-password').focus(); }
-    if (id) { terminalRequest('close', { id: id }).catch(function () {}); }
+
+  function rememberTabs() {
+    try {
+      window.sessionStorage.setItem(TABS_KEY, JSON.stringify({
+        active: activeTerminal ? activeTerminal.id : null,
+        tabs: terminals.map(function (tab) {
+          return { id: tab.id, title: tab.title };
+        })
+      }));
+    } catch (error) { /* private mode: tabs last for this page only */ }
   }
-  // One long-lived stream carries shell output, so echo no longer waits for a
-  // 500 ms poll tick plus a round trip.
-  function startTerminalStream() {
-    var id = terminalId;
-    if (!id) { return; }
-    if (terminalStream) { terminalStream.close(); }
+
+  function savedTabs() {
+    try {
+      var saved = JSON.parse(window.sessionStorage.getItem(TABS_KEY));
+      // Older pages stored a bare list of tabs.
+      if (Array.isArray(saved)) { saved = { active: null, tabs: saved }; }
+      if (!saved || !Array.isArray(saved.tabs)) { return { active: null, tabs: [] }; }
+      return {
+        active: typeof saved.active === 'string' ? saved.active : null,
+        tabs: saved.tabs.filter(function (tab) {
+          return tab && typeof tab.id === 'string' && typeof tab.title === 'string';
+        })
+      };
+    } catch (error) { return { active: null, tabs: [] }; }
+  }
+
+  function makePane(tab) {
+    var pane = document.createElement('div');
+    pane.className = 'terminal-pane';
+    pane.hidden = true;
+    $('#terminal-output').appendChild(pane);
+    var emulator = new Terminal({ cursorBlink: false, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 14,
+      scrollback: 2000, screenReaderMode: a11yEnabled(),
+      theme: { background: '#070a0e', foreground: '#e9f1f6', cursor: '#c3f451' } });
+    var fit = new FitAddon.FitAddon();
+    emulator.loadAddon(fit);
+    emulator.open(pane);
+    emulator.onData(function (input) {
+      if (!tab.id) { return; }
+      tab.pending += input;
+      flushTerminalInput(tab);
+    });
+    tab.pane = pane;
+    tab.emulator = emulator;
+    tab.fit = fit;
+    return tab;
+  }
+
+  function renderTabs() {
+    var bar = $('#terminal-tabs');
+    bar.textContent = '';
+    terminals.forEach(function (tab) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'terminal-tab' + (tab === activeTerminal ? ' on' : '');
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', tab === activeTerminal ? 'true' : 'false');
+      button.dataset.terminal = tab.id;
+      button.appendChild(document.createTextNode(tab.title));
+      var close = document.createElement('span');
+      close.className = 'terminal-tab-close';
+      close.setAttribute('aria-hidden', 'true');
+      close.textContent = '×';
+      button.appendChild(close);
+      bar.appendChild(button);
+    });
+    $('#terminal-new').disabled = terminals.length >= TERMINAL_MAX;
+  }
+
+  function showTerminalView() {
+    var hasTabs = terminals.length > 0;
+    $('#terminal-lock').hidden = hasTabs;
+    $('#terminal-session').hidden = !hasTabs;
+  }
+
+  function activate(id) {
+    var tab = terminals.filter(function (item) { return item.id === id; })[0] || null;
+    activeTerminal = tab;
+    terminals.forEach(function (item) { item.pane.hidden = item !== tab; });
+    renderTabs();
+    rememberTabs();
+    if (tab && state.route === 'terminal') {
+      window.requestAnimationFrame(function () { fitTerminal(); tab.emulator.focus(); });
+    }
+  }
+
+  function startTerminalStream(tab) {
+    if (!tab.id) { return; }
+    if (tab.stream) { tab.stream.close(); }
+    var id = tab.id;
+    // One long-lived stream carries shell output, so echo does not wait for a
+    // poll tick plus a round trip. The server replays recent output first.
     var stream = new EventSource('/api/terminal/stream?id=' + encodeURIComponent(id));
-    terminalStream = stream;
+    tab.stream = stream;
     stream.onmessage = function (event) {
-      if (terminalId !== id || !terminalEmulator) { return; }
+      if (tab.id !== id || !tab.emulator) { return; }
       var binary = atob(event.data);
       var bytes = new Uint8Array(binary.length);
       for (var i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
-      terminalEmulator.write(bytes);
+      tab.emulator.write(bytes);
     };
     stream.onerror = function () {
       stream.close();
-      if (terminalId !== id) { return; }
-      closeTerminal();
-      $('#terminal-status').textContent = 'Terminal disconnected: connection closed';
+      if (tab.id !== id) { return; }
+      dropTerminal(tab, false);
+      toast('Terminal disconnected: connection closed', 'error');
     };
   }
 
   // Keystrokes are coalesced while a write is in flight. Sending one request
   // per character serialised a whole word behind one round trip each.
-  function flushTerminalInput() {
-    if (!terminalId || terminalSending || !terminalPending) { return; }
-    var id = terminalId;
-    var chunk = terminalPending.slice(0, 2000);
-    terminalPending = terminalPending.slice(chunk.length);
-    terminalSending = true;
+  function flushTerminalInput(tab) {
+    if (!tab.id || tab.sending || !tab.pending) { return; }
+    var id = tab.id;
+    var chunk = tab.pending.slice(0, 2000);
+    tab.pending = tab.pending.slice(chunk.length);
+    tab.sending = true;
     terminalRequest('input', { id: id, input: chunk }).then(function () {
-      terminalSending = false;
-      if (terminalId === id) { flushTerminalInput(); }
+      tab.sending = false;
+      flushTerminalInput(tab);
     }).catch(function (error) {
-      terminalSending = false;
-      if (terminalId === id) { closeTerminal(); $('#terminal-status').textContent = 'Terminal disconnected: ' + error.message; }
+      tab.sending = false;
+      if (tab.id !== id) { return; }
+      dropTerminal(tab, false);
+      toast('Terminal disconnected: ' + error.message, 'error');
     });
   }
 
   function fitTerminal() {
     // A hidden xterm has no useful dimensions; keep the shell's current size
     // until its view is visible again.
-    if (state.route !== 'terminal' || !terminalId || !terminalFit || !terminalEmulator) { return; }
-    terminalFit.fit();
-    var id = terminalId;
-    var cols = terminalEmulator.cols, rows = terminalEmulator.rows;
+    var tab = activeTerminal;
+    if (state.route !== 'terminal' || !tab || !tab.fit || !tab.emulator || tab.pane.hidden) { return; }
+    tab.fit.fit();
+    var id = tab.id;
+    var cols = tab.emulator.cols, rows = tab.emulator.rows;
     if (cols < 2 || rows < 2 || cols > 500 || rows > 300) { return; }
-    terminalResize = terminalResize.catch(function () {}).then(function () {
-      if (terminalId !== id) { return; }
+    tab.resize = tab.resize.catch(function () {}).then(function () {
+      if (!tab.id || tab.id !== id) { return; }
       return terminalRequest('resize', { id: id, cols: cols, rows: rows });
-    }).catch(function (error) { if (terminalId === id) { $('#terminal-status').textContent = 'Resize failed: ' + error.message; } });
+    }).catch(function (error) {
+      if (tab.id === id) { toast('Resize failed: ' + error.message, 'error'); }
+    });
+  }
+
+  function dropTerminal(tab, closeRemote) {
+    var index = terminals.indexOf(tab);
+    if (index === -1) { return; }
+    var id = tab.id;
+    terminals.splice(index, 1);
+    tab.id = null;
+    if (tab.stream) { tab.stream.close(); tab.stream = null; }
+    if (tab.emulator) { tab.emulator.dispose(); tab.emulator = null; }
+    if (tab.pane && tab.pane.parentNode) { tab.pane.parentNode.removeChild(tab.pane); }
+    rememberTabs();
+    if (activeTerminal === tab) {
+      activeTerminal = terminals[terminals.length - 1] || null;
+      if (activeTerminal) { activate(activeTerminal.id); }
+    }
+    showTerminalView();
+    renderTabs();
+    if (!activeTerminal && state.route === 'terminal') { $('#terminal-password').focus(); }
+    if (closeRemote && id) { terminalRequest('close', { id: id }).catch(function () {}); }
+  }
+
+  function nextShellTitle() {
+    var number = 1;
+    terminals.forEach(function (tab) {
+      var match = /^Shell (\d+)$/.exec(tab.title);
+      if (match) { number = Math.max(number, parseInt(match[1], 10) + 1); }
+    });
+    return 'Shell ' + number;
+  }
+
+  function openTerminal(password) {
+    if (terminals.length >= TERMINAL_MAX) {
+      return Promise.reject(new Error('Close a shell first (' + TERMINAL_MAX + ' max)'));
+    }
+    return terminalRequest('open', { password: password }).then(function (data) {
+      var tab = { id: data.id, title: nextShellTitle(), pending: '', sending: false, resize: Promise.resolve() };
+      terminals.push(tab);
+      makePane(tab);
+      showTerminalView();
+      activate(tab.id);
+      startTerminalStream(tab);
+      rememberTabs();
+      return tab;
+    });
+  }
+
+  function askTerminalPassword() {
+    $('#shell-password').value = '';
+    $('#shell-dialog').showModal();
+    $('#shell-password').focus();
+  }
+
+  // Reattach after a reload: sessionStorage names the shells this tab had, and
+  // the server confirms which are still alive before any stream opens.
+  function restoreTerminals() {
+    var saved = savedTabs();
+    if (!saved.tabs.length) { return; }
+    api('/api/terminal/list').then(function (data) {
+      var live = {};
+      (data.terminals || []).forEach(function (item) { live[item.id] = true; });
+      var restored = saved.tabs.filter(function (item) { return live[item.id]; });
+      restored.forEach(function (item) {
+        var tab = { id: item.id, title: item.title, pending: '', sending: false, resize: Promise.resolve() };
+        terminals.push(tab);
+        makePane(tab);
+        // The server replays each shell's recent output when its stream opens.
+        startTerminalStream(tab);
+      });
+      showTerminalView();
+      renderTabs();
+      rememberTabs();
+      if (!terminals.length) { return; }
+      var reopen = terminals.filter(function (tab) { return tab.id === saved.active; })[0];
+      activate((reopen || terminals[0]).id);
+    }).catch(function (error) { toast('Terminal: ' + error.message, 'error'); });
   }
 
   // ------------------------------------------------------------------ data
@@ -1008,43 +1168,68 @@
       var password = field.value;
       field.value = '';
       button.disabled = true;
-      terminalRequest('open', { password: password }).then(function (data) {
-        terminalId = data.id;
-        $('#terminal-lock').hidden = true;
-        $('#terminal-session').hidden = false;
-        $('#terminal-status').textContent = 'Terminal open as the Termux user.';
-        terminalEmulator = new Terminal({ cursorBlink: false, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 14,
-          scrollback: 2000, screenReaderMode: a11yToggle.checked, theme: { background: '#070a0e', foreground: '#e9f1f6', cursor: '#c3f451' } });
-        terminalFit = new FitAddon.FitAddon();
-        terminalEmulator.loadAddon(terminalFit);
-        terminalEmulator.open($('#terminal-output'));
-        terminalEmulator.onData(function (input) {
-          if (!terminalId) { return; }
-          terminalPending += input;
-          flushTerminalInput();
-        });
-        fitTerminal();
-        if (state.route === 'terminal') { terminalEmulator.focus(); }
-        startTerminalStream();
+      openTerminal(password).then(function () {
+        // Kept in memory only: later tabs in this page can open without asking
+        // again. It is never written to storage.
+        terminalSecret = password;
       }).catch(function (error) {
-        if (terminalId) { closeTerminal(); }
-        $('#terminal-status').textContent = error.message;
+        toast(error.message, 'error');
       }).finally(function () { button.disabled = false; });
     });
-    $('#terminal-close').addEventListener('click', closeTerminal);
+
+    $('#terminal-new').addEventListener('click', function () {
+      if (terminals.length >= TERMINAL_MAX) {
+        toast('Close a shell first (' + TERMINAL_MAX + ' max)', 'error');
+        return;
+      }
+      if (!terminalSecret) { askTerminalPassword(); return; }
+      openTerminal(terminalSecret).catch(function (error) {
+        if (/password/i.test(error.message)) { terminalSecret = ''; askTerminalPassword(); }
+        else { toast(error.message, 'error'); }
+      });
+    });
+
+    $('#terminal-tabs').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-terminal]');
+      if (!button) { return; }
+      if (event.target.classList.contains('terminal-tab-close')) {
+        var closing = terminals.filter(function (tab) { return tab.id === button.dataset.terminal; })[0];
+        if (closing) { dropTerminal(closing, true); }
+        return;
+      }
+      activate(button.dataset.terminal);
+    });
+
+    $('#shell-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+      var button = $('#shell-form button[type="submit"]');
+      var password = $('#shell-password').value;
+      button.disabled = true;
+      openTerminal(password).then(function () {
+        terminalSecret = password;
+        $('#shell-dialog').close();
+      }).catch(function (error) {
+        toast(error.message, 'error');
+      }).finally(function () { button.disabled = false; });
+    });
+    $('#shell-cancel').addEventListener('click', function () { $('#shell-dialog').close(); });
+
+    $('#terminal-close').addEventListener('click', function () {
+      if (activeTerminal) { dropTerminal(activeTerminal, true); }
+    });
     var a11yToggle = $('#terminal-a11y');
     a11yToggle.checked = a11yEnabled();
     a11yToggle.addEventListener('change', function () {
       try { window.localStorage.setItem(A11Y_KEY, a11yToggle.checked ? '1' : '0'); }
       catch (error) { /* private mode: the choice just does not persist */ }
-      if (terminalEmulator) { terminalEmulator.options.screenReaderMode = a11yToggle.checked; }
+      terminals.forEach(function (tab) {
+        if (tab.emulator) { tab.emulator.options.screenReaderMode = a11yToggle.checked; }
+      });
     });
-    window.addEventListener('pagehide', function () {
-      if (terminalId) {
-        fetch('/api/terminal/close', { method: 'POST', credentials: 'same-origin', keepalive: true,
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: terminalId }) });
-      }
-    });
+    // A reload is not a logout: leave the shells for the server to reap if the
+    // page never comes back, and let the next load reattach instead of
+    // refusing to open a new one.
+    window.addEventListener('pagehide', rememberTabs);
 
     $('#log-reload').addEventListener('click', loadLogs);
     $('#log-service').addEventListener('change', loadLogs);
@@ -1091,6 +1276,7 @@
   function start() {
     wire();
     show(routeFromHash());
+    restoreTerminals();
     refreshStatus();
     loadTimeline(state.range);
     loadEvents();

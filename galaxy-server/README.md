@@ -92,7 +92,9 @@ Use at least 16 characters. Dashboard sign-in and the terminal password are both
 
 Screen reader mode is off by default to keep large terminal output responsive. Enable **Screen reader mode** in the terminal toolbar for accessible terminal output; it takes effect immediately and the browser remembers the choice when local storage is available.
 
-Switching between dashboard views keeps the same terminal shell and output stream alive, including commands running while another view is open. Returning to Terminal restores its existing output and fits it to the visible view. Use **Lock terminal** to close the shell explicitly. Dashboard navigation also preserves log filters, the auto-refresh choice, chart range, unsaved probe settings and each view's scroll position. These view states last for the current dashboard page; a full reload or closing the tab ends the terminal session as before.
+Switching between dashboard views keeps every terminal shell and its output stream alive, including commands running while another view is open. Returning to Terminal restores the output and fits the active shell to the visible view. **+ New shell** opens up to four shells, each with its own tab, stream and scrollback; **Close shell** ends the tab you are on.
+
+A browser reload reattaches to the shells the page had open, without asking for the terminal password again: the page remembers the shell ids for that browser tab and the server replays recent output for the redraw. A shell that is opened after a reload asks for the password once, and it is kept in memory only. Shells the page never reattaches to close after two minutes; any shell also closes after ten minutes without input. Dashboard navigation also preserves log filters, the auto-refresh choice, chart range, unsaved probe settings and each view's scroll position.
 
 ## Console and control API
 

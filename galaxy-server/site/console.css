@@ -67,11 +67,29 @@ body.terminal-view main { max-width: none; flex: 1; min-height: 0; padding: 0; d
 .terminal-lock { width: min(100%, 420px); margin: auto; padding: 24px; }
 .terminal-lock > p { color: var(--muted); margin-top: 8px; }
 .terminal-lock .form { margin: 20px 0; }
-#terminal-status { color: var(--muted); padding: 0 24px 12px; font-size: 12px; }
 #terminal-session:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.terminal-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: var(--raised); border-bottom: 1px solid var(--line); color: var(--muted); }
-.terminal-tools { display: flex; align-items: center; gap: 14px; }
+.terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 16px; background: var(--raised); border-bottom: 1px solid var(--line); color: var(--muted); }
+.terminal-tools { display: flex; align-items: center; gap: 14px; margin-left: auto; }
 .terminal-tools label.check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink); }
+.terminal-tabs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; }
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--void);
+  color: var(--muted);
+  font: 11.5px var(--mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.terminal-tab:hover { border-color: #33424f; color: var(--ink); }
+.terminal-tab.on { border-color: var(--lime); color: var(--ink); background: #c3f45112; }
+.terminal-tab-close { color: var(--dim); padding: 0 2px; }
+.terminal-tab:hover .terminal-tab-close { color: #ff9d90; }
+.terminal-pane { height: 100%; }
 #terminal-output { background: var(--void); flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 12px; }
 #terminal-output:focus-within { outline: 2px solid var(--lime); outline-offset: -2px; }
 
@@ -678,6 +696,7 @@ dialog::backdrop { background: #04070ac9; }
   padding: 8px 10px;
   font: 12.5px var(--mono);
 }
+.confirm-form input:focus-visible { outline: 2px solid var(--lime); outline-offset: 1px; }
 
 /* ------------------------------------------------------------------- toast */
 .toast {

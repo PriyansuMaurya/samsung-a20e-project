@@ -154,6 +154,96 @@ class TerminalTest(unittest.TestCase):
             server.server_close()
             worker.join()
 
+    def test_multiple_shells_and_scrollback(self):
+        server = status.Server(('127.0.0.1', 0), status.Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        host = '127.0.0.1:%s' % server.server_port
+        status.set_terminal_password('a-strong-test-password')
+        cookie = 'galaxy_session=' + status.new_session('tester')
+
+        def post(path, body):
+            conn = http.client.HTTPConnection(host, timeout=5)
+            headers = {'Content-Type': 'application/json', 'Host': host,
+                       'Origin': 'http://' + host, 'Cookie': cookie}
+            conn.request('POST', path, json.dumps(body), headers)
+            response = conn.getresponse()
+            result = response.status, json.loads(response.read())
+            conn.close()
+            return result
+
+        def get(path):
+            conn = http.client.HTTPConnection(host, timeout=5)
+            conn.request('GET', path, headers={'Host': host, 'Cookie': cookie})
+            response = conn.getresponse()
+            result = response.status, json.loads(response.read())
+            conn.close()
+            return result
+
+        try:
+            first = post('/api/terminal/open', {'password': 'a-strong-test-password'})
+            second = post('/api/terminal/open', {'password': 'a-strong-test-password'})
+            self.assertEqual(first[0], 200)
+            self.assertEqual(second[0], 200, 'a second shell in the same session must open')
+            first_id, second_id = first[1]['id'], second[1]['id']
+            self.assertNotEqual(first_id, second_id)
+
+            code, listing = get('/api/terminal/list')
+            self.assertEqual(code, 200)
+            self.assertEqual({item['id'] for item in listing['terminals']}, {first_id, second_id})
+
+            post('/api/terminal/input', {'id': first_id, 'input': "printf '%s%s\\n' SHELL_ ONE\n"})
+            output = b''
+            deadline = time.monotonic() + 5
+            while b'SHELL_ONE' not in output and time.monotonic() < deadline:
+                _, data = post('/api/terminal/read', {'id': first_id})
+                output += base64.b64decode(data['output'])
+                time.sleep(.05)
+            self.assertIn(b'SHELL_ONE', output)
+            buffer = status.TERMINALS[first_id]['buffer']
+            self.assertIn(b'SHELL_ONE', bytes(buffer), 'output must be kept for a reattaching tab')
+
+            self.assertEqual(post('/api/terminal/close', {'id': first_id})[0], 200)
+            self.assertIn(second_id, status.TERMINALS)
+            self.assertEqual(get('/api/terminal/list')[1]['terminals'][0]['id'], second_id)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
+    def test_shell_count_is_capped(self):
+        original = status.TERMINAL_MAX
+        status.TERMINAL_MAX = 2
+        server = status.Server(('127.0.0.1', 0), status.Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        host = '127.0.0.1:%s' % server.server_port
+        status.set_terminal_password('a-strong-test-password')
+        cookie = 'galaxy_session=' + status.new_session('tester')
+
+        def open_shell():
+            conn = http.client.HTTPConnection(host, timeout=5)
+            conn.request('POST', '/api/terminal/open',
+                         json.dumps({'password': 'a-strong-test-password'}),
+                         {'Content-Type': 'application/json', 'Host': host,
+                          'Origin': 'http://' + host, 'Cookie': cookie})
+            response = conn.getresponse()
+            code, body = response.status, json.loads(response.read())
+            conn.close()
+            return code, body
+
+        try:
+            self.assertEqual(open_shell()[0], 200)
+            self.assertEqual(open_shell()[0], 200)
+            code, body = open_shell()
+            self.assertEqual(code, 409)
+            self.assertIn('2 max', body['error'])
+        finally:
+            status.TERMINAL_MAX = original
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
     def test_session_is_bound_and_can_execute(self):
         session = status.start_terminal('owner')
         self.assertIsNone(status.terminal_for(session, 'other'))

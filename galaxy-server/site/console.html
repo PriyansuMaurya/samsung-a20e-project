@@ -311,9 +311,15 @@
         </form>
         <p class="sub">Commands run as the Termux user, not root.</p>
       </div>
-      <p id="terminal-status" role="status" aria-live="polite">Terminal locked.</p>
       <div id="terminal-session" hidden>
-        <div class="terminal-toolbar"><span>Termux shell</span><div class="terminal-tools"><label class="check"><input type="checkbox" id="terminal-a11y"> Screen reader mode (slower)</label><button class="btn small" id="terminal-close" type="button">Lock terminal</button></div></div>
+        <div class="terminal-toolbar">
+          <div class="terminal-tabs" id="terminal-tabs" role="tablist" aria-label="Terminal sessions"></div>
+          <div class="terminal-tools">
+            <button class="btn small" id="terminal-new" type="button">+ New shell</button>
+            <label class="check"><input type="checkbox" id="terminal-a11y"> Screen reader mode (slower)</label>
+            <button class="btn small" id="terminal-close" type="button">Close shell</button>
+          </div>
+        </div>
         <div id="terminal-output" aria-label="Interactive Termux terminal"></div>
       </div>
     </section>
@@ -366,6 +372,18 @@
 
   </main>
 </div>
+
+<dialog id="shell-dialog" aria-labelledby="shell-title">
+  <form class="confirm-form" id="shell-form">
+    <h2 id="shell-title">New terminal</h2>
+    <p>Enter the terminal password to open another shell. It is kept in memory for this page only.</p>
+    <label>Terminal password <input id="shell-password" type="password" autocomplete="off" required></label>
+    <div class="btn-row end">
+      <button class="btn" type="button" id="shell-cancel">Cancel</button>
+      <button class="btn primary" type="submit">Open shell</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="confirm-dialog" aria-labelledby="confirm-title">
   <form method="dialog" class="confirm-form">
