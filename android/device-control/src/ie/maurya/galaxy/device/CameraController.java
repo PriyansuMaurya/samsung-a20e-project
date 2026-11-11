@@ -233,10 +233,19 @@ final class CameraController {
         if (recording) {
             throw new DeviceApi.ApiError(409, "a video is already recording");
         }
+        if (device == null || session == null) {
+            // The sensor drops out after a recording on this device (camera
+            // error 4), so pressing Record again must reopen it rather than
+            // ask the user to fiddle with the preview first.
+            if (!reopenForUse()) {
+                throw new DeviceApi.ApiError(503,
+                        "the camera did not open; check the preview and camera permission");
+            }
+        }
         CameraDevice open = device;
         CameraCaptureSession current = session;
         if (open == null || current == null) {
-            throw new DeviceApi.ApiError(409, "start the preview before recording video");
+            throw new DeviceApi.ApiError(503, "the camera is not available");
         }
         File directory = new File(context.getFilesDir(), "videos");
         if (!directory.exists() && !directory.mkdirs()) {
@@ -272,13 +281,34 @@ final class CameraController {
 
     synchronized JSONObject stopVideo() throws Exception {
         File finished = videoFile;
+        if (finished == null) {
+            // Nothing was recording (or the sensor dropped and cleared it).
+            stopVideoQuietly();
+            return new JSONObject().put("ok", true).put("file", "")
+                    .put("bytes", 0).put("seconds", 0).put("audio", false);
+        }
         long seconds = Math.max(0, (System.currentTimeMillis() - videoStarted) / 1000);
         boolean audio = videoAudio;
         stopVideoQuietly();
         return new JSONObject().put("ok", true)
-                .put("file", finished == null ? "" : finished.getName())
-                .put("bytes", finished == null ? 0 : finished.length())
+                .put("file", finished.getName()).put("bytes", finished.length())
                 .put("seconds", seconds).put("audio", audio);
+    }
+
+    /**
+     * Opens the sensor again after the camera service has torn it down, and
+     * waits until a repeating session is actually configured.
+     */
+    private boolean reopenForUse() {
+        String id = pendingId == null || pendingId.isEmpty() ? "0" : pendingId;
+        closeQuietly();
+        openDevice(id);
+        awaitFirstFrame(3000);
+        if (device != null && session != null) {
+            return true;
+        }
+        closeQuietly();
+        return false;
     }
 
     private boolean prepareRecorder(File target, boolean audio) {
@@ -358,6 +388,11 @@ final class CameraController {
             try {
                 sessionReady.await(3, TimeUnit.SECONDS);
             } catch (InterruptedException ignored) {
+            }
+            if (session == null && subscriberCount() > 0) {
+                // The device often reports camera error 4 after a recording;
+                // the preview stream is still attached, so bring it back.
+                reopenForUse();
             }
         }
     }

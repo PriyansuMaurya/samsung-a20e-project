@@ -80,7 +80,9 @@ endpoint used through `status.py`.
    is not used. Two consequences: the video surface caps resolution at 1280x720
    while the JPEG stream keeps its own size, and sound is dropped when the
    microphone is already streaming or recording, because only one capture can
-   hold it.
+   hold it. This unit reports `camera error 4` once a recording ends and drops
+   the sensor, so Record reopens it: recording works with the preview off and
+   for a second take straight after the first.
 2. **One camera user at a time.** While the preview holds camera `0`,
    `CameraManager.setTorchMode()` fails with `CAMERA_IN_USE`; the app sets
    `FLASH_MODE_TORCH` on the open capture session instead. The torch is released
