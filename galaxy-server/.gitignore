@@ -1,0 +1,4 @@
+node_modules/
+package-lock.json
+visual_audit.cjs
+package.json
