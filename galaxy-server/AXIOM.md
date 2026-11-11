@@ -119,8 +119,8 @@ All events are NDJSON objects with `_time` (UTC, ISO 8601), `event`, `source`
 
 | `event` | Fields |
 | --- | --- |
-| `galaxy.sample` | memory, swap, storage, battery, temperature, CPU, per-service booleans, tunnel counters |
-| `galaxy.log` | `service`, `severity`, `message`, timestamp parsed from the line |
+| `galaxy.sample` | memory, swap, storage, battery, temperature, CPU, per-service booleans, tunnel counters (`tunnel_connections`, `tunnel_requests`, `tunnel_errors`) |
+| `galaxy.log` | `service`, `severity`, `message`, timestamp parsed from the line; for `service=access`, severity follows the HTTP status (5xx `error`, 4xx `warn`) |
 | `galaxy.event` | `kind` (`restart`, `down`, `reboot`, `tunnel-up`, `tunnel-down`, `admin`), `detail`, `service` |
 | `galaxy.check` | `host`, `ok`, `status`, `ms`, `error` |
 | `galaxy.audit` | `user`, `action`, `outcome`, `detail`; one per console action, from the `audits` table |
@@ -128,8 +128,8 @@ All events are NDJSON objects with `_time` (UTC, ISO 8601), `event`, `source`
 
 ### History catch-up and release logs
 
-The five operational logs, plus `deploy.log` and `manual-deploy.log`, are
-forwarded as `galaxy.log`. Samples and checks are emitted live as they happen,
+All eight operational logs, including `deploy.log`, `manual-deploy.log` and the
+failed-request `access.log`, are forwarded as `galaxy.log`. Samples and checks are emitted live as they happen,
 so their history is only the rows written **before** forwarding began: the
 exporter records a `history_floor` once and only sends rows older than it, which
 is what keeps a row from arriving twice. `history_since` in the config can set
@@ -138,6 +138,10 @@ been exporting live. `history_batch` (default 200 rows per cycle) bounds the CPU
 and network a catch-up may use; a 46-hour backlog drains in about ten minutes
 and then costs nothing. Audit rows have no live event, so their id cursor simply
 advances each cycle. The `sessions` table is never read: it holds sign-in tokens.
+
+A live `galaxy.sample` and a caught-up one from the `samples` table carry the
+same field names, so one saved query covers both. There is no HTTPS probe in
+the sample path; that result is `galaxy.check` per host.
 
 ### Batching, retries and spool
 
@@ -149,6 +153,13 @@ advances each cycle. The `sessions` table is never read: it holds sign-in tokens
   order.
 - 4xx responses are permanent: the batch is dropped, counted as `rejected`, and
   the status shows the scrubbed Axiom error. Invalid events cannot loop forever.
+- Counters mean exactly one thing each: `exported` events Axiom acknowledged as
+  ingested, `failed` events named in a 2xx response's `failures` list,
+  `rejected` events dropped by a permanent 4xx, `deferred` batches kept for a
+  retryable failure, `dropped` oldest-queue evictions. A spool that cannot
+  drain, like a queue that cannot send, sets `last_error` and makes `state`
+  `degraded`; it is never reported as `ok`. `bytes_sent` totals the NDJSON
+  bodies posted, including refused ones.
 - The queue drops the oldest event when full and counts the loss. The spool
   trims the oldest lines over its cap. Both are bounded by design on a 3 GB
   phone.
@@ -164,7 +175,12 @@ advances each cycle. The `sessions` table is never read: it holds sign-in tokens
   lines that were actually queued, so a bounded drain never skips or repeats a
   line.
 - A file that shrinks or is replaced restarts at offset 0. Rotated files such as
-  `auth.log.1` are not forwarded; the live file is.
+  `auth.log.1` are not forwarded; the live file is. The bytes between the last
+  read and a rotation are therefore not forwarded from that file, but every
+  audit row and restart is also in SQLite, which is what carries them.
+- Delivery is at-least-once, not exactly-once: a crash after Axiom accepted a
+  batch but before the cursor file was written resends that batch on restart.
+  Nothing in the design avoids this, and nothing loses data because of it.
 - `serverctl telemetry-backfill [limit]` is for maintenance after a long
   outage. The live service owns the cursors, so the command refuses to run
   while it is up.

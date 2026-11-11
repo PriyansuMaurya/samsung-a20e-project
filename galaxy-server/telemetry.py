@@ -103,7 +103,7 @@ LIMITS = {
 SAMPLE_COLUMNS = ('ts', 'uptime_s', 'mem_used_mb', 'mem_total_mb', 'mem_pct',
                   'swap_pct', 'free_gb', 'storage_pct', 'batt', 'plugged', 'temp_c',
                   'cpu_pct', 'nginx', 'api', 'supervisor', 'tunnel_proc',
-                  'tunnel_ready', 'tunnel_conns', 'tunnel_req', 'https_ok', 'https_ms')
+                  'tunnel_ready', 'tunnel_conns', 'tunnel_req', 'tunnel_errors')
 
 DATASET = re.compile(r'^[A-Za-z0-9._-]{1,128}$')
 TIMESTAMP = re.compile(r'^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{2}):(\d{2}):(\d{2})')
@@ -268,6 +268,24 @@ def classify(line):
     return 'info'
 
 
+# Nginx access lines start with method, path, status, so the code is the first
+# bare three-digit field. Only failures are logged, and "404" in the path would
+# otherwise make classify() call every line "info".
+ACCESS_STATUS = re.compile(r'^\S+ \S+ (\d{3}) ')
+
+
+def access_severity(line):
+    match = ACCESS_STATUS.match(line)
+    if not match:
+        return classify(line)
+    status = int(match.group(1))
+    if status >= 500:
+        return 'error'
+    if status >= 400:
+        return 'warn'
+    return 'info'
+
+
 def line_time(line):
     match = TIMESTAMP.match(line)
     if not match:
@@ -303,7 +321,7 @@ class Telemetry:
         self._health = None
         self._stats = {
             'exported': 0, 'failed': 0, 'rejected': 0, 'dropped': 0,
-            'batches': 0, 'deferred': 0,
+            'batches': 0, 'deferred': 0, 'bytes_sent': 0, 'by_event': {},
             'last_success_at': None, 'last_error': None,
             'last_error_at': None, 'last_status': None,
         }
@@ -383,6 +401,12 @@ class Telemetry:
         if spooled:
             outcome = self._send_with_retry(spooled, config)
             if not outcome['ok']:
+                # The batch is already on disk, so nothing is lost, but a spool
+                # that cannot drain is a delivery outage and has to show up in
+                # status instead of looking idle.
+                with self._lock:
+                    self._stats['deferred'] += 1
+                self._record_outcome(outcome, None, delivered=False)
                 return {'ok': False, 'reason': outcome['error']}
             with self._lock:
                 self._spool_drop(spool_lines)
@@ -401,14 +425,16 @@ class Telemetry:
                 self._queue.extendleft(reversed(rest))
         outcome = self._send_with_retry(batch, config)
         if not outcome['ok']:
-            if outcome['retryable']:
-                with self._lock:
+            # Nothing here was accepted, so it is not "failed": a retryable
+            # batch is deferred to the spool, a permanent one is rejected by
+            # Axiom. Only a 2xx that names per-event failures counts as failed.
+            with self._lock:
+                if outcome['retryable']:
                     self._spool_append(batch)
                     self._stats['deferred'] += 1
-            else:
-                with self._lock:
+                else:
                     self._stats['rejected'] += len(batch)
-            self._record_outcome(outcome, batch)
+            self._record_outcome(outcome, None, delivered=False)
             return {'ok': False, 'reason': outcome['error'], 'events': len(batch)}
         self._record_outcome(outcome, batch)
         return {'ok': True, 'events': len(batch), 'ingested': outcome['ingested'],
@@ -472,11 +498,12 @@ class Telemetry:
             return {'ok': False, 'status': status,
                     'retryable': status == 429 or status >= 500 or status in (408, 409),
                     'error': scrub('HTTP %d %s' % (status, text), 240),
-                    'retry_after': retry_after, 'ingested': 0, 'failed': len(batch)}
+                    'retry_after': retry_after, 'ingested': 0, 'failed': len(batch),
+                    'bytes': len(body)}
         except (urllib.error.URLError, OSError, ValueError) as error:
             return {'ok': False, 'status': None, 'retryable': True,
                     'error': scrub('%s: %s' % (type(error).__name__, error), 240),
-                    'ingested': 0, 'failed': len(batch)}
+                    'ingested': 0, 'failed': len(batch), 'bytes': 0}
 
         ingested, failed, error_text = len(batch), 0, None
         try:
@@ -495,13 +522,15 @@ class Telemetry:
         ok = 200 <= status < 300
         return {'ok': ok, 'status': status, 'retryable': False,
                 'error': scrub(error_text or ('HTTP %d' % status), 240) if not ok else None,
-                'ingested': ingested, 'failed': failed}
+                'ingested': ingested, 'failed': failed, 'bytes': len(body)}
 
-    def _record_outcome(self, outcome, batch=None):
+    def _record_outcome(self, outcome, batch=None, delivered=True):
         with self._lock:
             self._stats['batches'] += 1
-            self._stats['exported'] += outcome.get('ingested') or 0
-            self._stats['failed'] += outcome.get('failed') or 0
+            if delivered:
+                self._stats['exported'] += outcome.get('ingested') or 0
+                self._stats['failed'] += outcome.get('failed') or 0
+            self._stats['bytes_sent'] += outcome.get('bytes') or 0
             self._stats['last_status'] = outcome.get('status')
             if outcome['ok']:
                 self._stats['last_success_at'] = time.time()
@@ -717,7 +746,9 @@ class Telemetry:
                                 line_bytes += len(raw)
                                 continue
                             event = {'event': 'galaxy.log', 'service': name,
-                                     'severity': classify(text), 'message': text,
+                                     'severity': (access_severity(text) if name == 'access'
+                                                  else classify(text)),
+                                     'message': text,
                                      '_time': utc_iso(line_time(text))}
                             if not self.emit(event, entry_point='forwarder'):
                                 stopped = True
@@ -838,9 +869,7 @@ class Telemetry:
                      'tunnel_ready': bool(value['tunnel_ready']),
                      'tunnel_connections': value['tunnel_conns'],
                      'tunnel_requests': value['tunnel_req'],
-                     'https_ok': (bool(value['https_ok'])
-                                  if value['https_ok'] is not None else None),
-                     'https_ms': value['https_ms']}
+                     'tunnel_errors': value['tunnel_errors']}
             if not self.emit(event, entry_point='backfill'):
                 break
             cursor = value['ts']
@@ -1139,8 +1168,8 @@ class Telemetry:
         if live:
             live_age = int(now - live['updated_at'])
             for key in ('exported', 'failed', 'rejected', 'dropped', 'deferred',
-                        'batches', 'last_success_at', 'last_error', 'last_error_at',
-                        'last_status'):
+                        'bytes_sent', 'batches', 'last_success_at', 'last_error',
+                        'last_error_at', 'last_status'):
                 if key in live:
                     stats[key] = live[key]
             queued = live.get('queued', queued)
@@ -1169,6 +1198,7 @@ class Telemetry:
             'rejected': stats['rejected'],
             'dropped': stats['dropped'],
             'deferred': stats['deferred'],
+            'bytes_sent': stats['bytes_sent'],
             'batches': stats['batches'],
             'last_success_at': utc_iso(stats['last_success_at']) if stats['last_success_at'] else None,
             'last_error': stats['last_error'],

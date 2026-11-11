@@ -184,7 +184,7 @@ def init_db():
             cpu_pct REAL,
             nginx INTEGER, api INTEGER, supervisor INTEGER, tunnel_proc INTEGER,
             tunnel_ready INTEGER, tunnel_conns INTEGER, tunnel_req INTEGER,
-            https_ok INTEGER, https_ms INTEGER
+            tunnel_errors INTEGER, https_ok INTEGER, https_ms INTEGER
         );
         CREATE TABLE IF NOT EXISTS events(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,6 +207,11 @@ def init_db():
         # Databases created before the service column existed keep working.
         try:
             db.execute('ALTER TABLE events ADD COLUMN service TEXT')
+        except sqlite3.OperationalError:
+            pass
+        # Same for the tunnel error counter, added after the first release.
+        try:
+            db.execute('ALTER TABLE samples ADD COLUMN tunnel_errors INTEGER')
         except sqlite3.OperationalError:
             pass
 
@@ -584,7 +589,8 @@ def sample_once():
             'INSERT OR REPLACE INTO samples(ts, uptime_s, mem_used_mb, mem_total_mb, '
             'mem_pct, swap_pct, free_gb, storage_pct, batt, plugged, temp_c, cpu_pct, '
             'nginx, api, supervisor, tunnel_proc, tunnel_ready, tunnel_conns, tunnel_req, '
-            'https_ok, https_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'tunnel_errors, https_ok, https_ms) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (now,
              int(int(_boottime())),
              mem['used_mb'] if mem else None, mem['total_mb'] if mem else None,
@@ -597,7 +603,7 @@ def sample_once():
              cpu_pct,
              state['nginx'], state['status'], state['supervisor'], state['cloudflared'],
              1 if tun['ready'] else 0, tun['connections'], tun['requests'],
-             None, None))
+             tun.get('errors'), None, None))
 
     # events: reboots, service restarts, tunnel transitions
     if previous is not None and previous['uptime_s'] and int(_boottime()) < previous['uptime_s'] - 60:

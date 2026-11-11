@@ -179,6 +179,30 @@ class TelemetryTest(unittest.TestCase):
         self.assertEqual(self.axiom.requests[-1]['body'], first_body)
         self.assertFalse(os.path.exists(self.client.spool_path))
 
+    def test_a_spool_that_cannot_drain_is_reported_as_degraded(self):
+        self.axiom.default = (500, {'error': 'down'}, {})
+        self.client.emit({'event': 'galaxy.test', 'message': 'still here'})
+        self.assertFalse(self.client.flush()['ok'])
+        self.assertIn('still here', Path(self.client.spool_path).read_text())
+        # The second attempt sends from the spool and fails the same way. The
+        # batch is safe on disk, but status must not keep saying "ok".
+        self.assertFalse(self.client.flush()['ok'])
+        state = self.client.status()
+        self.assertEqual(state['state'], 'degraded')
+        self.assertIn('500', state['last_error'])
+        self.assertGreaterEqual(state['deferred'], 2)
+        self.assertEqual(state['exported'], 0)
+        self.assertEqual(state['failed'], 0)
+        self.assertGreater(state['spool_events'], 0)
+
+    def test_byte_counter_matches_the_bodies_posted(self):
+        self.client.emit({'event': 'galaxy.sample'})
+        self.client.emit({'event': 'galaxy.log', 'message': 'x' * 100})
+        self.client.flush()
+        posted = sum(len(request['body']) for request in self.axiom.requests)
+        self.assertGreater(posted, 0)
+        self.assertEqual(self.client.status()['bytes_sent'], posted)
+
     def test_permanent_failure_is_not_retried_or_spooled(self):
         self.axiom.queue(401, {'error': 'bad token'})
         self.client.emit({'event': 'galaxy.test'})
@@ -267,6 +291,48 @@ class TelemetryTest(unittest.TestCase):
         Path(path).write_text('2026-11-09 10:05:00 after truncate\n')
         self.assertEqual(self.client.drain(files, log_dir, db_path)['logs'], 1)
 
+    def test_log_rotation_forwards_the_new_file_from_its_start(self):
+        log_dir = os.path.join(self.temp.name, 'log')
+        os.makedirs(log_dir)
+        path = os.path.join(log_dir, 'auth.log')
+        Path(path).write_text('2026-11-09 10:00:00 user=bob action=login outcome=ok\n')
+        db_path = os.path.join(self.temp.name, 'run', 'galaxy.db')
+        self.assertEqual(self.client.drain({'auth': 'auth.log'}, log_dir, db_path)['logs'], 1)
+        os.replace(path, path + '.1')
+        Path(path).write_text('2026-11-09 10:05:00 user=bob action=login outcome=failed\n')
+        self.assertEqual(self.client.drain({'auth': 'auth.log'}, log_dir, db_path)['logs'], 1)
+        self.client.flush()
+        messages = [event['message'] for event in self.bodies()
+                    if event['event'] == 'galaxy.log']
+        self.assertEqual(messages, [
+            '2026-11-09 10:00:00 user=bob action=login outcome=ok',
+            '2026-11-09 10:05:00 user=bob action=login outcome=failed'])
+
+    def test_access_log_severity_follows_the_status_code(self):
+        log_dir = os.path.join(self.temp.name, 'log')
+        os.makedirs(log_dir)
+        Path(os.path.join(log_dir, 'access.log')).write_text(
+            'GET /missing 404 0.000 146\nPOST /api/login 500 0.021 12\n')
+        db_path = os.path.join(self.temp.name, 'run', 'galaxy.db')
+        self.assertEqual(self.client.drain({'access': 'access.log'}, log_dir, db_path)['logs'], 2)
+        self.client.flush()
+        severities = [event['severity'] for event in self.bodies()
+                      if event['event'] == 'galaxy.log']
+        self.assertEqual(severities, ['warn', 'error'])
+
+    def test_cursor_rollback_is_the_only_source_of_duplicates(self):
+        log_dir = os.path.join(self.temp.name, 'log')
+        os.makedirs(log_dir)
+        Path(os.path.join(log_dir, 'status.log')).write_text('2026-11-09 10:00:00 once\n')
+        files = {'status': 'status.log'}
+        db_path = os.path.join(self.temp.name, 'run', 'galaxy.db')
+        self.assertEqual(self.client.drain(files, log_dir, db_path)['logs'], 1)
+        self.assertEqual(self.client.drain(files, log_dir, db_path)['logs'], 0)
+        # Losing the cursor file is the one documented way to resend: the
+        # exporter is at-least-once, never twice for a normal cycle.
+        os.remove(self.client.state_path)
+        self.assertEqual(self.client.drain(files, log_dir, db_path)['logs'], 1)
+
     def test_events_are_forwarded_once_by_row_id(self):
         db_path = os.path.join(self.temp.name, 'run', 'events.db')
         connection = sqlite3.connect(db_path)
@@ -339,8 +405,8 @@ class TelemetryTest(unittest.TestCase):
             'mem_used_mb INTEGER, mem_total_mb INTEGER, mem_pct INTEGER, swap_pct INTEGER, '
             'free_gb REAL, storage_pct INTEGER, batt INTEGER, plugged INTEGER, temp_c REAL, '
             'cpu_pct REAL, nginx INTEGER, api INTEGER, supervisor INTEGER, tunnel_proc INTEGER, '
-            'tunnel_ready INTEGER, tunnel_conns INTEGER, tunnel_req INTEGER, https_ok INTEGER, '
-            'https_ms INTEGER)')
+            'tunnel_ready INTEGER, tunnel_conns INTEGER, tunnel_req INTEGER, '
+            'tunnel_errors INTEGER, https_ok INTEGER, https_ms INTEGER)')
         connection.execute(
             'CREATE TABLE checks (ts INTEGER NOT NULL, host TEXT NOT NULL, ok INTEGER, '
             'status INTEGER, ms INTEGER, PRIMARY KEY (ts, host))')
@@ -360,9 +426,9 @@ class TelemetryTest(unittest.TestCase):
     def test_history_forwards_samples_checks_and_audits_once(self):
         now = int(time.time())
         db_path = self._history_db([
-            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
              (now - 100, 1000, 300, 2800, 60, 0, 20.5, 80, 55, 1, 28.0, 3.5,
-              1, 1, 1, 1, 1, 4, 900, 1, 120)),
+              1, 1, 1, 1, 1, 4, 900, 7, 1, 120)),
             ('INSERT INTO checks VALUES (?,?,?,?,?)',
              (now - 90, 'galaxy.maurya.ie', 1, 200, 140)),
             ('INSERT INTO audits(ts, user, action, outcome, detail) VALUES (?,?,?,?,?)',
@@ -378,8 +444,50 @@ class TelemetryTest(unittest.TestCase):
         self.assertEqual(events[1]['services'], {'nginx': True, 'status': True,
                                                  'supervisor': True, 'cloudflared': True})
         self.assertEqual(events[1]['batt_pct'], 55)
+        self.assertEqual(events[1]['tunnel_errors'], 7)
         self.assertEqual(events[2]['host'], 'galaxy.maurya.ie')
         self.assertEqual(self.client.drain({}, self.temp.name, db_path)['history'], 0)
+
+    def test_backfilled_samples_carry_every_live_sample_field(self):
+        """One dashboard query must cover live and caught-up rows alike."""
+        captured = []
+
+        class Capture:
+            def emit(inner, event, entry_point=None):
+                captured.append(event)
+                return True
+
+        original = status.TELEMETRY
+        status.TELEMETRY = Capture()
+        try:
+            status._emit_sample({
+                'now': 1794417000,
+                'mem': {'used_mb': 300, 'total_mb': 2800, 'used_percent': 11,
+                        'swap_used_percent': 0},
+                'disk': {'free_gb': 20.0, 'used_percent': 80},
+                'batt': {'percent': 55, 'charging': True, 'temperature_c': 28.0},
+                'tunnel': {'ready': True, 'connections': 4, 'requests': 900,
+                           'errors': 7},
+                'processes': [], 'pids': {}, 'cpu': 3.5})
+        finally:
+            status.TELEMETRY = original
+        live = captured[0]
+        self.assertEqual(live['tunnel_errors'], 7)
+
+        now = int(time.time())
+        db_path = self._history_db([
+            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+             (now - 100, 1000, 300, 2800, 60, 0, 20.5, 80, 55, 1, 28.0, 3.5,
+              1, 1, 1, 1, 1, 4, 900, 7, 1, 120)),
+        ])
+        self.client.drain({}, self.temp.name, db_path)
+        self.client.flush()
+        caught_up = next(event for event in self.bodies()
+                         if event['event'] == 'galaxy.sample')
+        missing = set(live) - set(caught_up)
+        self.assertEqual(missing, set())
+        self.assertEqual(caught_up['tunnel_errors'], 7)
+        self.assertEqual(caught_up['services']['status'], True)
 
     def test_live_counters_are_persisted_for_status(self):
         self.client.emit({'event': 'galaxy.sample'})
@@ -411,8 +519,8 @@ class TelemetryTest(unittest.TestCase):
     def test_history_skips_rows_newer_than_the_forwarding_floor(self):
         now = int(time.time())
         db_path = self._history_db([
-            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-             (now + 600, 1, 1, 1, 1, 0, 1.0, 1, 1, 0, 20.0, 0.0, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+             (now + 600, 1, 1, 1, 1, 0, 1.0, 1, 1, 0, 20.0, 0.0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1)),
         ])
         self.assertEqual(self.client.drain({}, self.temp.name, db_path)['history'], 0)
 
