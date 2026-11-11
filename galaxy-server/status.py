@@ -76,6 +76,8 @@ LOG_FILES = {
     # said. Both are operationally useful and contain no credentials.
     'deploy': 'deploy.log',
     'deploy-manual': 'manual-deploy.log',
+    # Nginx writes only failed requests here, so the file stays small.
+    'access': 'access.log',
 }
 
 SERVICES = (

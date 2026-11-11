@@ -44,6 +44,8 @@ from collections import deque
 CONFIG_NAME = 'axiom.json'
 SPOOL_NAME = 'telemetry-spool.ndjson'
 STATE_NAME = 'telemetry-state.json'
+# Delivery counters the running service writes for serverctl and the report.
+LIVE_NAME = 'telemetry-live.json'
 DEVICE = 'galaxy-a20e'
 SOURCE = 'galaxy-server'
 DEFAULT_ENDPOINT = 'https://us-east-1.aws.edge.axiom.co'
@@ -287,6 +289,9 @@ class Telemetry:
         self.config_path = config_path or os.path.join(run_dir, CONFIG_NAME)
         self.spool_path = os.path.join(run_dir, SPOOL_NAME)
         self.state_path = os.path.join(run_dir, STATE_NAME)
+        self.live_path = os.path.join(run_dir, LIVE_NAME)
+        self._live_saved = 0.0
+        self._stats_updated = 0.0
         self._lock = threading.RLock()
         self._queue = deque()
         self._config_cache = None
@@ -381,7 +386,7 @@ class Telemetry:
                 return {'ok': False, 'reason': outcome['error']}
             with self._lock:
                 self._spool_drop(spool_lines)
-            self._record_outcome(outcome)
+            self._record_outcome(outcome, spooled)
             return {'ok': True, 'spool': True, 'events': len(spooled),
                     'ingested': outcome['ingested'], 'failed': outcome['failed']}
 
@@ -403,9 +408,9 @@ class Telemetry:
             else:
                 with self._lock:
                     self._stats['rejected'] += len(batch)
-            self._record_outcome(outcome)
+            self._record_outcome(outcome, batch)
             return {'ok': False, 'reason': outcome['error'], 'events': len(batch)}
-        self._record_outcome(outcome)
+        self._record_outcome(outcome, batch)
         return {'ok': True, 'events': len(batch), 'ingested': outcome['ingested'],
                 'failed': outcome['failed']}
 
@@ -492,7 +497,7 @@ class Telemetry:
                 'error': scrub(error_text or ('HTTP %d' % status), 240) if not ok else None,
                 'ingested': ingested, 'failed': failed}
 
-    def _record_outcome(self, outcome):
+    def _record_outcome(self, outcome, batch=None):
         with self._lock:
             self._stats['batches'] += 1
             self._stats['exported'] += outcome.get('ingested') or 0
@@ -500,9 +505,17 @@ class Telemetry:
             self._stats['last_status'] = outcome.get('status')
             if outcome['ok']:
                 self._stats['last_success_at'] = time.time()
+                # Counted per event type so a pipeline can be checked against
+                # the local rows it was built from, without querying Axiom.
+                by_event = self._stats.setdefault('by_event', {})
+                for event in batch or ():
+                    kind = event.get('event') or 'unknown'
+                    by_event[kind] = by_event.get(kind, 0) + 1
             else:
                 self._stats['last_error'] = outcome['error']
                 self._stats['last_error_at'] = time.time()
+            self._stats_updated = time.time()
+        self._save_live()
 
     # ------------------------------------------------------------------ spool
 
@@ -970,6 +983,40 @@ class Telemetry:
                               % (status, scrub(text, 200)))
         return {'ok': True, 'previous': current, 'retention_days': days}
 
+    LIVE_REFRESH = 60.0
+
+    def _save_live(self):
+        """Persist delivery counters at most once a minute (flash friendly)."""
+        now = time.time()
+        if now - self._live_saved < self.LIVE_REFRESH:
+            return
+        with self._lock:
+            snapshot = dict(self._stats)
+            snapshot['by_event'] = dict(self._stats.get('by_event') or {})
+            snapshot['queued'] = len(self._queue)
+        snapshot['updated_at'] = now
+        snapshot['pid'] = os.getpid()
+        temp = self.live_path + '.tmp'
+        try:
+            descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+                json.dump(snapshot, handle, sort_keys=True)
+            os.replace(temp, self.live_path)
+        except OSError:
+            return
+        self._live_saved = now
+
+    def _live_stats(self, max_age=180.0):
+        try:
+            info = os.stat(self.live_path)
+            with open(self.live_path, encoding='utf-8') as handle:
+                live = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(live, dict) or time.time() - info.st_mtime > max_age:
+            return None
+        return live
+
     # -------------------------------------------------------------- diagnosis
 
     def _ingest_probe(self, base, config):
@@ -1081,6 +1128,23 @@ class Telemetry:
             stats = dict(self._stats)
             queued = len(self._queue)
         now = time.time()
+        # The counters that matter belong to the running service, not to this
+        # process; read them from its last snapshot when it is still fresh.
+        live = self._live_stats()
+        if live and live.get('pid') == os.getpid():
+            # The snapshot is this process's own; in-memory counters are newer.
+            live = None
+        live_age = None
+        by_event = dict(stats.get('by_event') or {})
+        if live:
+            live_age = int(now - live['updated_at'])
+            for key in ('exported', 'failed', 'rejected', 'dropped', 'deferred',
+                        'batches', 'last_success_at', 'last_error', 'last_error_at',
+                        'last_status'):
+                if key in live:
+                    stats[key] = live[key]
+            queued = live.get('queued', queued)
+            by_event = live.get('by_event') or by_event
         state = 'off'
         if self._config_error:
             state = 'error'
@@ -1110,6 +1174,9 @@ class Telemetry:
             'last_error': stats['last_error'],
             'last_error_at': utc_iso(stats['last_error_at']) if stats['last_error_at'] else None,
             'last_status': stats['last_status'],
+            'by_event': by_event,
+            'live': bool(live),
+            'live_age_s': live_age,
         }
 
     def send_test(self):

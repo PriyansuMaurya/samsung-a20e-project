@@ -381,6 +381,33 @@ class TelemetryTest(unittest.TestCase):
         self.assertEqual(events[2]['host'], 'galaxy.maurya.ie')
         self.assertEqual(self.client.drain({}, self.temp.name, db_path)['history'], 0)
 
+    def test_live_counters_are_persisted_for_status(self):
+        self.client.emit({'event': 'galaxy.sample'})
+        self.client.emit({'event': 'galaxy.log', 'message': 'line'})
+        self.assertEqual(self.client.flush()['ingested'], 2)
+        self.client._live_saved = 0
+        self.client._save_live()
+        raw = Path(self.client.live_path).read_text()
+        saved = json.loads(raw)
+        self.assertEqual(saved['by_event'], {'galaxy.sample': 1, 'galaxy.log': 1})
+        self.assertEqual(saved['exported'], 2)
+        self.assertNotIn(TOKEN, raw)
+        # Pretend the snapshot came from the running service, not this process.
+        saved['pid'] = os.getpid() + 1
+        Path(self.client.live_path).write_text(json.dumps(saved))
+        state = self.client.status()
+        self.assertTrue(state['live'])
+        self.assertEqual(state['exported'], 2)
+        self.assertEqual(state['by_event'], {'galaxy.sample': 1, 'galaxy.log': 1})
+
+    def test_stale_counters_are_ignored(self):
+        self.client.emit({'event': 'galaxy.sample'})
+        self.client.flush()
+        self.client._live_saved = 0
+        self.client._save_live()
+        os.utime(self.client.live_path, (time.time() - 600, time.time() - 600))
+        self.assertFalse(self.client.status()['live'])
+
     def test_history_skips_rows_newer_than_the_forwarding_floor(self):
         now = int(time.time())
         db_path = self._history_db([
@@ -399,6 +426,7 @@ class TelemetryTest(unittest.TestCase):
     def test_release_logs_are_forwarded(self):
         self.assertIn('deploy', status.LOG_FILES)
         self.assertIn('deploy-manual', status.LOG_FILES)
+        self.assertIn('access', status.LOG_FILES)
         log_dir = os.path.join(self.temp.name, 'log')
         os.makedirs(log_dir, exist_ok=True)
         with open(os.path.join(log_dir, 'deploy.log'), 'a', encoding='utf-8') as handle:
