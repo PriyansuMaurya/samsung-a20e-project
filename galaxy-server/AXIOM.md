@@ -107,7 +107,7 @@ client.emit(event, entry_point='sampler')   # non-blocking, bounded queue
 client.start(LOG_FILES, LOG_DIR, DB_PATH)   # forward new log bytes and events
 client.flush()                              # one batch, with retries
 client.status()                             # JSON-safe, never the token
-client.backfill(LOG_FILES, LOG_DIR, DB_PATH)
+client.backfill(LOG_FILES, LOG_DIR, DB_PATH)  # logs, events, samples, checks, audits
 client.apply_retention(days)
 ```
 
@@ -123,7 +123,21 @@ All events are NDJSON objects with `_time` (UTC, ISO 8601), `event`, `source`
 | `galaxy.log` | `service`, `severity`, `message`, timestamp parsed from the line |
 | `galaxy.event` | `kind` (`restart`, `down`, `reboot`, `tunnel-up`, `tunnel-down`, `admin`), `detail`, `service` |
 | `galaxy.check` | `host`, `ok`, `status`, `ms`, `error` |
+| `galaxy.audit` | `user`, `action`, `outcome`, `detail`; one per console action, from the `audits` table |
 | `galaxy.health` | `health` (`ok`/`warn`/`crit`), `alerts`; emitted on change plus a 5 min heartbeat |
+
+### History catch-up and release logs
+
+The five operational logs, plus `deploy.log` and `manual-deploy.log`, are
+forwarded as `galaxy.log`. Samples and checks are emitted live as they happen,
+so their history is only the rows written **before** forwarding began: the
+exporter records a `history_floor` once and only sends rows older than it, which
+is what keeps a row from arriving twice. `history_since` in the config can set
+that floor explicitly when enabling history on an installation that has already
+been exporting live. `history_batch` (default 200 rows per cycle) bounds the CPU
+and network a catch-up may use; a 46-hour backlog drains in about ten minutes
+and then costs nothing. Audit rows have no live event, so their id cursor simply
+advances each cycle. The `sessions` table is never read: it holds sign-in tokens.
 
 ### Batching, retries and spool
 

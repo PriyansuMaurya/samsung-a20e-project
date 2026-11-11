@@ -331,6 +331,85 @@ class TelemetryTest(unittest.TestCase):
         self.assertEqual(self.axiom.requests[-1]['auth'],
                          'Bearer xaat-management-token')
 
+    def _history_db(self, rows, sessions=None):
+        path = os.path.join(self.temp.name, 'run', 'history.db')
+        connection = sqlite3.connect(path)
+        connection.execute(
+            'CREATE TABLE samples (ts INTEGER PRIMARY KEY, uptime_s INTEGER, '
+            'mem_used_mb INTEGER, mem_total_mb INTEGER, mem_pct INTEGER, swap_pct INTEGER, '
+            'free_gb REAL, storage_pct INTEGER, batt INTEGER, plugged INTEGER, temp_c REAL, '
+            'cpu_pct REAL, nginx INTEGER, api INTEGER, supervisor INTEGER, tunnel_proc INTEGER, '
+            'tunnel_ready INTEGER, tunnel_conns INTEGER, tunnel_req INTEGER, https_ok INTEGER, '
+            'https_ms INTEGER)')
+        connection.execute(
+            'CREATE TABLE checks (ts INTEGER NOT NULL, host TEXT NOT NULL, ok INTEGER, '
+            'status INTEGER, ms INTEGER, PRIMARY KEY (ts, host))')
+        connection.execute(
+            'CREATE TABLE audits (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, '
+            'user TEXT, action TEXT, outcome TEXT, detail TEXT)')
+        connection.execute('CREATE TABLE sessions (token TEXT PRIMARY KEY, user TEXT NOT NULL, '
+                           'expires INTEGER NOT NULL)')
+        for row in rows:
+            connection.execute(row[0], row[1])
+        if sessions:
+            connection.execute('INSERT INTO sessions VALUES (?,?,?)', sessions)
+        connection.commit()
+        connection.close()
+        return path
+
+    def test_history_forwards_samples_checks_and_audits_once(self):
+        now = int(time.time())
+        db_path = self._history_db([
+            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+             (now - 100, 1000, 300, 2800, 60, 0, 20.5, 80, 55, 1, 28.0, 3.5,
+              1, 1, 1, 1, 1, 4, 900, 1, 120)),
+            ('INSERT INTO checks VALUES (?,?,?,?,?)',
+             (now - 90, 'galaxy.maurya.ie', 1, 200, 140)),
+            ('INSERT INTO audits(ts, user, action, outcome, detail) VALUES (?,?,?,?,?)',
+             (now - 80, 'console', 'server-restart', 'scheduled', 'runs in 1s')),
+        ])
+        counts = self.client.drain({}, self.temp.name, db_path)
+        self.assertEqual(counts['history'], 3)
+        self.client.flush()
+        events = self.bodies()
+        self.assertEqual([event['event'] for event in events],
+                         ['galaxy.audit', 'galaxy.sample', 'galaxy.check'])
+        self.assertEqual(events[0]['action'], 'server-restart')
+        self.assertEqual(events[1]['services'], {'nginx': True, 'status': True,
+                                                 'supervisor': True, 'cloudflared': True})
+        self.assertEqual(events[1]['batt_pct'], 55)
+        self.assertEqual(events[2]['host'], 'galaxy.maurya.ie')
+        self.assertEqual(self.client.drain({}, self.temp.name, db_path)['history'], 0)
+
+    def test_history_skips_rows_newer_than_the_forwarding_floor(self):
+        now = int(time.time())
+        db_path = self._history_db([
+            ('INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+             (now + 600, 1, 1, 1, 1, 0, 1.0, 1, 1, 0, 20.0, 0.0, 1, 1, 1, 1, 1, 1, 1, 1, 1)),
+        ])
+        self.assertEqual(self.client.drain({}, self.temp.name, db_path)['history'], 0)
+
+    def test_history_never_reads_session_tokens(self):
+        db_path = self._history_db([], sessions=('session-token-abc123', 'console', 9999999999))
+        self.client.drain({}, self.temp.name, db_path)
+        self.client.flush()
+        self.assertNotIn('session-token-abc123',
+                         json.dumps(self.axiom.requests, default=str))
+
+    def test_release_logs_are_forwarded(self):
+        self.assertIn('deploy', status.LOG_FILES)
+        self.assertIn('deploy-manual', status.LOG_FILES)
+        log_dir = os.path.join(self.temp.name, 'log')
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, 'deploy.log'), 'a', encoding='utf-8') as handle:
+            handle.write('2026-11-11T16:54:17 deployed fbffad6\n')
+        counts = self.client.drain({'deploy': 'deploy.log'}, log_dir,
+                                   os.path.join(self.temp.name, 'run', 'none.db'))
+        self.assertEqual(counts['logs'], 1)
+        self.client.flush()
+        messages = [event['message'] for event in self.bodies() if event['event'] == 'galaxy.log']
+        self.assertTrue(any('deployed fbffad6' in message for message in messages))
+
     def _managed(self):
         original = telemetry.MANAGE_ENDPOINT
         telemetry.MANAGE_ENDPOINT = self.axiom.endpoint

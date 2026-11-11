@@ -131,6 +131,7 @@ The server had no remote telemetry sink before this change: samples, events and 
 
 - `run/axiom.json` (mode 0600) holds the edge endpoint, dataset, API token and retention. Deployment preserves `run/`.
 - Batches of up to 100 structured events are posted as NDJSON, with retries, a bounded disk spool and redaction before anything leaves the phone. Retention is a dataset setting and lowering it deletes older Axiom data, so the command refuses without `--force-lower`.
+- Forwarded sources: the five operational logs plus `deploy.log` and `manual-deploy.log`, `events`, `audits` (structured), and the `samples` and `checks` tables. Samples and checks are emitted live, so history only fills in rows written before forwarding started; `history_batch` bounds a catch-up to 200 rows per cycle. The `sessions` table, `run/htpasswd`, `run/terminal.passwd`, `run/deploy-key` and `run/deploy-secret` are never read.
 - The first start with no cursor forwards existing `events` rows and the current log files from the beginning; offsets only advance for lines that were queued.
 - `serverctl telemetry-setup`, `telemetry-test`, `telemetry-status`, `telemetry-doctor`, `telemetry-retention`, `telemetry-backfill`. `telemetry-doctor` reports the dataset lookup, posts a probe event to every Axiom edge region and names the one that accepts it; `--apply` writes that endpoint into the config, and `--create` creates the dataset when the token is allowed to.
 - The Settings view shows export state from `/api/telemetry`; the token is never returned.

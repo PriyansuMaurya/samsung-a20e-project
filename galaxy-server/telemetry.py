@@ -76,6 +76,10 @@ DEFAULTS = {
     'spool_max_kb': 512,
     'max_queue': 2000,
     'log_forward': True,
+    'history_batch': 200,
+    # Epoch seconds for the one-time catch-up of samples/checks written before
+    # forwarding began. 0 means "from the moment forwarding first ran".
+    'history_since': 0,
 }
 
 LIMITS = {
@@ -88,7 +92,16 @@ LIMITS = {
     'max_batch_bytes': (4096, 5 * 1024 * 1024),
     'spool_max_kb': (16, 64 * 1024),
     'max_queue': (50, 100000),
+    'history_batch': (0, 5000),
+    'history_since': (0, 4102444800),
 }
+
+# Columns copied from the samples table for history forwarding. The live
+# sampler emits the same names, so one dashboard query covers both.
+SAMPLE_COLUMNS = ('ts', 'uptime_s', 'mem_used_mb', 'mem_total_mb', 'mem_pct',
+                  'swap_pct', 'free_gb', 'storage_pct', 'batt', 'plugged', 'temp_c',
+                  'cpu_pct', 'nginx', 'api', 'supervisor', 'tunnel_proc',
+                  'tunnel_ready', 'tunnel_conns', 'tunnel_req', 'https_ok', 'https_ms')
 
 DATASET = re.compile(r'^[A-Za-z0-9._-]{1,128}$')
 TIMESTAMP = re.compile(r'^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{2}):(\d{2}):(\d{2})')
@@ -603,6 +616,9 @@ class Telemetry:
             return {'logs': {}, 'event_cursor': 0}
         state.setdefault('logs', {})
         state.setdefault('event_cursor', 0)
+        state.setdefault('audit_cursor', 0)
+        state.setdefault('sample_cursor', 0)
+        state.setdefault('check_cursor', 0)
         if not isinstance(state['logs'], dict):
             state['logs'] = {}
         return state
@@ -632,10 +648,12 @@ class Telemetry:
         before = json.dumps(state, sort_keys=True)
         forwarded = self._forward_logs(log_files, log_dir, state, budget)
         forwarded_events = self._forward_events(db_path, state, budget - forwarded)
+        forwarded_history = self._forward_history(
+            db_path, state, budget - forwarded - forwarded_events)
         # An idle cycle should not rewrite the cursor file to flash.
         if json.dumps(state, sort_keys=True) != before:
             self._save_state(state)
-        return {'logs': forwarded, 'events': forwarded_events}
+        return {'logs': forwarded, 'events': forwarded_events, 'history': forwarded_history}
 
     def _forward_logs(self, log_files, log_dir, state, budget):
         count = 0
@@ -730,6 +748,111 @@ class Telemetry:
         state['event_cursor'] = cursor
         return count
 
+    def _forward_history(self, db_path, state, budget):
+        """Forward table rows that are not covered by a live event.
+
+        Samples and checks are emitted live as they happen, so history is
+        limited to rows older than the moment forwarding began: a row reaches
+        Axiom once, from either path, never both. Audits have no live event at
+        all, so their id cursor advances on every cycle. Nothing here reads the
+        sessions table, which holds sign-in tokens.
+        """
+        config = self.config()
+        budget = min(int(budget), int(config['history_batch'] or 0))
+        if budget <= 0 or not os.path.exists(db_path):
+            return 0
+        floor = state.get('history_floor')
+        if not isinstance(floor, int):
+            floor = int(config['history_since'] or 0) or int(time.time())
+            state['history_floor'] = floor
+        uri = 'file:%s?mode=ro' % urllib.parse.quote(db_path.replace('\\', '/'))
+        connection = None
+        sent = 0
+        try:
+            connection = sqlite3.connect(uri, uri=True, timeout=3)
+            sent += self._forward_audits(connection, state, budget)
+            sent += self._forward_sample_history(connection, state, floor, budget - sent)
+            sent += self._forward_check_history(connection, state, floor, budget - sent)
+        except sqlite3.Error:
+            return sent
+        finally:
+            if connection is not None:
+                connection.close()
+        return sent
+
+    def _forward_audits(self, connection, state, budget):
+        cursor = int(state.get('audit_cursor') or 0)
+        rows = connection.execute(
+            'SELECT id, ts, user, action, outcome, detail FROM audits '
+            'WHERE id > ? ORDER BY id LIMIT ?', (cursor, budget)).fetchall()
+        count = 0
+        for row in rows:
+            event = {'event': 'galaxy.audit', 'user': row[2], 'action': row[3],
+                     'outcome': row[4], 'detail': row[5], '_time': utc_iso(row[1])}
+            if not self.emit(event, entry_point='forwarder'):
+                break
+            cursor = row[0]
+            count += 1
+        state['audit_cursor'] = cursor
+        return count
+
+    def _forward_sample_history(self, connection, state, floor, budget):
+        if budget <= 0:
+            return 0
+        cursor = int(state.get('sample_cursor') or 0)
+        rows = connection.execute(
+            'SELECT %s FROM samples WHERE ts < ? AND ts > ? ORDER BY ts LIMIT ?'
+            % ', '.join(SAMPLE_COLUMNS), (floor, cursor, budget)).fetchall()
+        count = 0
+        for row in rows:
+            value = dict(zip(SAMPLE_COLUMNS, row))
+            event = {'event': 'galaxy.sample', '_time': utc_iso(value['ts']),
+                     'uptime_s': value['uptime_s'], 'mem_pct': value['mem_pct'],
+                     'mem_used_mb': value['mem_used_mb'],
+                     'mem_total_mb': value['mem_total_mb'],
+                     'swap_pct': value['swap_pct'], 'free_gb': value['free_gb'],
+                     'storage_pct': value['storage_pct'], 'batt_pct': value['batt'],
+                     'charging': (bool(value['plugged'])
+                                  if value['plugged'] is not None else None),
+                     'temp_c': value['temp_c'], 'cpu_pct': value['cpu_pct'],
+                     'services': {'nginx': bool(value['nginx']),
+                                  'status': bool(value['api']),
+                                  'supervisor': bool(value['supervisor']),
+                                  'cloudflared': bool(value['tunnel_proc'])},
+                     'tunnel_ready': bool(value['tunnel_ready']),
+                     'tunnel_connections': value['tunnel_conns'],
+                     'tunnel_requests': value['tunnel_req'],
+                     'https_ok': (bool(value['https_ok'])
+                                  if value['https_ok'] is not None else None),
+                     'https_ms': value['https_ms']}
+            if not self.emit(event, entry_point='backfill'):
+                break
+            cursor = value['ts']
+            count += 1
+        state['sample_cursor'] = cursor
+        return count
+
+    def _forward_check_history(self, connection, state, floor, budget):
+        if budget <= 0:
+            return 0
+        cursor = int(state.get('check_cursor') or 0)
+        host_cursor = state.get('check_host') or ''
+        rows = connection.execute(
+            'SELECT ts, host, ok, status, ms FROM checks '
+            'WHERE ts < ? AND (ts > ? OR (ts = ? AND host > ?)) '
+            'ORDER BY ts, host LIMIT ?',
+            (floor, cursor, cursor, host_cursor, budget)).fetchall()
+        count = 0
+        for ts, host, ok, status, ms in rows:
+            event = {'event': 'galaxy.check', 'host': host, 'ok': bool(ok),
+                     'status': status, 'ms': ms, '_time': utc_iso(ts)}
+            if not self.emit(event, entry_point='backfill'):
+                break
+            cursor, host_cursor = ts, host
+            count += 1
+        state['check_cursor'], state['check_host'] = cursor, host_cursor
+        return count
+
     # ------------------------------------------------------------------- loop
 
     def start(self, log_files, log_dir, db_path):
@@ -776,7 +899,7 @@ class Telemetry:
                 break
             counts = self.drain(log_files, log_dir, db_path,
                                 limit=min(500, limit - total))
-            moved = counts['logs'] + counts['events']
+            moved = counts['logs'] + counts['events'] + counts['history']
             if not moved:
                 break
             total += moved

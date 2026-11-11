@@ -72,6 +72,10 @@ LOG_FILES = {
     'supervisor': 'supervisor.log',
     'status': 'status.log',
     'auth': 'auth.log',
+    # Release history: which commit was installed, and what a failed install
+    # said. Both are operationally useful and contain no credentials.
+    'deploy': 'deploy.log',
+    'deploy-manual': 'manual-deploy.log',
 }
 
 SERVICES = (
