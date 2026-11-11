@@ -293,6 +293,7 @@ DEVICE_READS = {
     '/api/device/battery': '/battery',
     '/api/device/storage': '/storage',
     '/api/device/sensors': '/sensors',
+    '/api/device/connectivity': '/connectivity',
     '/api/device/volume': '/volume',
     '/api/device/photos': '/photos',
     '/api/device/recordings': '/recordings',
@@ -1559,7 +1560,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             payload = {'paired': True, 'health': health}
             for key, route in (('capabilities', '/capabilities'), ('battery', '/battery'),
-                               ('storage', '/storage'), ('volume', '/volume')):
+                               ('storage', '/storage'), ('volume', '/volume'),
+                               ('connectivity', '/connectivity')):
                 try:
                     _status, data = device_call(route, timeout=8)
                 except (OSError, http.client.HTTPException):

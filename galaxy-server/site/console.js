@@ -1294,6 +1294,31 @@
     $('#dev-recordings').textContent = ((folders.recordings || {}).count || 0) + ' · ' +
       mb((folders.recordings || {}).bytes || 0);
     $('#dev-uptime').textContent = (health.uptime_s || 0) + 's';
+    renderConnectivity(summary.connectivity || {});
+  }
+
+  function renderConnectivity(net) {
+    var kinds = [];
+    if (net.wifi) { kinds.push('WiFi'); }
+    if (net.cellular) { kinds.push('cellular'); }
+    if (!kinds.length) { kinds.push('offline'); }
+    if (net.metered) { kinds.push('metered'); }
+    if (net.validated) { kinds.push('validated'); }
+    var speed = net.down_mbps ? net.down_mbps + '/' + (net.up_mbps || 0) + ' Mbps'
+      : net.link_mbps ? net.link_mbps + ' Mbps link' : '';
+    var wifi = net.wifi_enabled === undefined ? '' : (net.wifi_enabled ? 'WiFi on' : 'WiFi off');
+    $('#dev-network').textContent = kinds.join(' · ') +
+      (net.ssid ? ' · ' + net.ssid : '') +
+      (speed ? ' · ' + speed : '') + (wifi ? ' · ' + wifi : '') +
+      (net.rssi_dbm ? ' · ' + net.rssi_dbm + ' dBm' : '');
+    var addresses = (net.addresses || []).filter(function (value) {
+      return value.indexOf('fe80') !== 0;
+    });
+    $('#dev-address').textContent = addresses.join(', ') ||
+      (net.interface ? net.interface + ' (no address)' : '—');
+    $('#dev-bluetooth').textContent = net.bluetooth_enabled === undefined ? '—'
+      : (net.bluetooth_enabled ? 'on' : 'off');
+    $('#dev-airplane').textContent = net.airplane_mode ? 'on' : 'off';
   }
 
   var VOLUME_LABELS = {

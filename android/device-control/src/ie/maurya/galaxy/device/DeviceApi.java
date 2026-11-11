@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.bluetooth.BluetoothAdapter;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -13,6 +14,13 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.AudioManager;
+import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Handler;
@@ -225,6 +233,62 @@ final class DeviceApi {
         out.put("brightness", brightnessValue());
         out.put("brightness_writable", Settings.System.canWrite(context));
         out.put("recording_supported", true);
+        return out;
+    }
+
+    /** Read-only: this app never turns a radio on or off. */
+    JSONObject connectivity() throws Exception {
+        JSONObject out = new JSONObject();
+        ConnectivityManager manager =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        Network active = manager.getActiveNetwork();
+        if (active != null) {
+            NetworkCapabilities cap = manager.getNetworkCapabilities(active);
+            if (cap != null) {
+                out.put("wifi", cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI));
+                out.put("cellular", cap.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+                out.put("metered", !cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED));
+                out.put("validated", cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+                out.put("down_mbps", cap.getLinkDownstreamBandwidthKbps() / 1000);
+                out.put("up_mbps", cap.getLinkUpstreamBandwidthKbps() / 1000);
+            }
+            LinkProperties props = manager.getLinkProperties(active);
+            if (props != null) {
+                out.put("interface", props.getInterfaceName());
+                JSONArray addresses = new JSONArray();
+                for (LinkAddress address : props.getLinkAddresses()) {
+                    addresses.put(address.getAddress().getHostAddress());
+                }
+                out.put("addresses", addresses);
+            }
+        }
+        WifiManager wifi = (WifiManager) context.getApplicationContext()
+                .getSystemService(Context.WIFI_SERVICE);
+        if (wifi != null) {
+            out.put("wifi_enabled", wifi.isWifiEnabled());
+            try {
+                WifiInfo info = wifi.getConnectionInfo();
+                if (info != null) {
+                    String ssid = info.getSSID();
+                    if (ssid != null) {
+                        ssid = ssid.replace("\"", "");
+                    }
+                    // Android 10+ withholds the SSID unless the app also holds
+                    // a location grant, which this one does not request.
+                    out.put("ssid", ssid == null || ssid.isEmpty()
+                            || ssid.contains("<unknown") ? "hidden by Android" : ssid);
+                    out.put("rssi_dbm", info.getRssi());
+                    out.put("link_mbps", info.getLinkSpeed());
+                }
+            } catch (SecurityException error) {
+                // Android 10+ hides the SSID without a location grant.
+                out.put("ssid", "hidden by Android");
+            }
+        }
+        BluetoothAdapter bluetooth = BluetoothAdapter.getDefaultAdapter();
+        out.put("bluetooth_enabled", bluetooth != null && bluetooth.isEnabled());
+        out.put("airplane_mode", Settings.Global.getInt(context.getContentResolver(),
+                Settings.Global.AIRPLANE_MODE_ON, 0) != 0);
         return out;
     }
 

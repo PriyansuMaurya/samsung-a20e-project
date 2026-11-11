@@ -248,7 +248,10 @@ test('device view drives the app through the proxy', async () => {
             battery: { percentage: 74, plugged: false, temperature_c: 28.4, voltage_mv: 4100 },
             storage: { free_bytes: 5 * 1024 * 1024 * 1024, total_bytes: 23 * 1024 * 1024 * 1024,
               folders: { photos: { count: 1, bytes: 1024 }, recordings: { count: 1, bytes: 2048 } } },
-            volume: { streams: { music: { index: 9, max: 15 }, alarm: { index: 15, max: 15 } } }
+            volume: { streams: { music: { index: 9, max: 15 }, alarm: { index: 15, max: 15 } } },
+            connectivity: { wifi: true, wifi_enabled: true, ssid: 'home-wifi',
+              addresses: ['192.168.0.74', 'fe80::1'], down_mbps: 72, up_mbps: 18,
+              metered: false, validated: true, bluetooth_enabled: false, airplane_mode: false }
           });
         }
         if (url.pathname === '/api/device/sensors') {
@@ -281,6 +284,10 @@ test('device view drives the app through the proxy', async () => {
     await page.waitForFunction(() => document.querySelector('#device-banner-text').textContent === 'Control app running');
     assert.match(await page.locator('#device-banner-detail').textContent(), /camera idle/);
     assert.equal(await page.locator('#dev-battery').textContent(), '74% · 4100 mV');
+    assert.match(await page.locator('#dev-network').textContent(), /WiFi · validated · home-wifi · 72\/18 Mbps · WiFi on/);
+    assert.equal(await page.locator('#dev-address').textContent(), '192.168.0.74');
+    assert.equal(await page.locator('#dev-bluetooth').textContent(), 'off');
+    assert.equal(await page.locator('#dev-airplane').textContent(), 'off');
     assert.equal(await page.locator('#cam-id option').count(), 2);
     assert.equal(await page.locator('#sensor-table tbody tr').count(), 1);
     assert.match(await page.locator('#sensor-table tbody').textContent(), /0.1, 0.2, 9.8/);

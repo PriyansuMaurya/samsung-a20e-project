@@ -20,7 +20,7 @@ state), not taken from a spec sheet.
 | Battery | `ACTION_BATTERY_CHANGED` (level, charger, temperature, voltage) | working |
 | Storage | `StatFs` on the app data directory | working |
 | Sensors | accelerometer, proximity, gyroscope, magnetic field, light | working (light sensor reports nothing) |
-| Connectivity | WiFi/cellular state | read only, no radio control |
+| Connectivity | `ConnectivityManager`, `WifiManager`, Bluetooth adapter, airplane mode | read only: transport, validated/metered, link speed, addresses, RSSI, radio states. Radios cannot be switched |
 
 ## 2. Architecture
 
@@ -66,6 +66,7 @@ endpoint used through `status.py`.
 | Media | `GET /api/device/media`, upload, `media-play`, `media-control`, `media-delete` | uploads up to 8 MB |
 | Sensors | `GET /api/device/sensors` | one reading per sensor, 800 ms budget |
 | Power/storage | `GET /api/device/battery`, `GET /api/device/storage` | |
+| Connectivity | `GET /api/device/connectivity` | transport, metered/validated, addresses, link speed, RSSI, Bluetooth and airplane state |
 
 ## 4. Android restrictions, stated plainly
 
@@ -90,11 +91,15 @@ endpoint used through `status.py`.
    Automatic brightness is disabled when a manual value is written.
 6. **The light sensor reports nothing** on this unit (no `TYPE_LIGHT`), so the
    table omits it rather than showing a zero.
-7. **Streams are time-boxed.** Camera and audio connections close after five
+7. **The SSID stays hidden.** Android 10+ returns `<unknown ssid>` unless the
+   app also holds a location grant, which it deliberately does not request; the
+   app reports `hidden by Android` rather than a misleading name. Radios are
+   read-only here, so no toggle in this console can take the phone off WiFi.
+8. **Streams are time-boxed.** Camera and audio connections close after five
    minutes; the dashboard reconnects by restarting the preview.
-8. **Uploads are bounded.** 8 MB per file, and only audio/video container types
+9. **Uploads are bounded.** 8 MB per file, and only audio/video container types
    the `MediaPlayer` can decode are worth uploading.
-9. **The app must be armed.** The control service runs as a foreground service
+10. **The app must be armed.** The control service runs as a foreground service
    with `camera|microphone` types; disarming it or stopping the app closes the
    port. The console reports "control app not running" instead of failing
    silently.
@@ -125,5 +130,6 @@ The build uses only the installed SDK: `javac`, `d8`, `aapt2`, `zipalign`,
 | Live audio, 4 s | 121,644 bytes of 16 kHz PCM |
 | Media upload and play | `tone.wav` (32,044 bytes) played, position 777/1000 ms |
 | Sensors | accelerometer, proximity, gyroscope values returned |
+| Connectivity | WiFi transport, `wlan0`, `192.168.0.74`, 72 Mbps link, -49 dBm, Bluetooth and airplane mode off |
 | Proxy | `test_device_proxy.py`, 5 tests: pairing, allowlist, streaming, upload, outages |
 | Console | `test_console.cjs` device test: banner, cards, torch/vibrate/brightness requests, preview lifecycle |

@@ -65,7 +65,8 @@ class DeviceProxyTest(unittest.TestCase):
                               '/capabilities': {'model': 'SM-A202F'},
                               '/battery': {'percentage': 80},
                               '/storage': {'free_bytes': 1},
-                              '/volume': {'streams': {}}}
+                              '/volume': {'streams': {}},
+                              '/connectivity': {'wifi': True}}
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.addCleanup(self.device.server_close)
@@ -125,6 +126,7 @@ class DeviceProxyTest(unittest.TestCase):
         self.assertTrue(payload['paired'])
         self.assertEqual(payload['capabilities']['model'], 'SM-A202F')
         self.assertEqual(payload['battery']['percentage'], 80)
+        self.assertTrue(payload['connectivity']['wifi'])
 
     def test_pairing_refused_when_window_closed(self):
         FakeDevice.replies['/pair'] = None  # unused: the handler answers directly

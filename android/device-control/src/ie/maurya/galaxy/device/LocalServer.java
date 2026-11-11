@@ -179,6 +179,10 @@ final class LocalServer {
             writeJson(out, 200, api.sensors());
             return;
         }
+        if ("GET".equals(method) && "/connectivity".equals(path)) {
+            writeJson(out, 200, api.connectivity());
+            return;
+        }
         if ("GET".equals(method) && "/volume".equals(path)) {
             writeJson(out, 200, api.volume());
             return;
