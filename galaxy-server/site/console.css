@@ -6,8 +6,10 @@
   --line: #1e2a35;
   --line-soft: #16202a;
   --ink: #e9f1f6;
-  --muted: #7d93a2;
-  --dim: #5a6e7c;
+  /* Both greys clear WCAG AA (4.5:1) against every surface they sit on, and
+     keep a visible step between secondary and tertiary text. */
+  --muted: #8aa0af;
+  --dim: #708596;
   --lime: #c3f451;
   --lime-dim: #8fb43c;
   --amber: #f2b441;
@@ -17,12 +19,17 @@
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --radius: 8px;
   --sidebar: 232px;
-  --accent-yellow: #f7d729;
-  --accent: var(--accent-yellow);
+  /* One accent (lime) plus status colours. Focus rings use the ink colour so
+     they stay visible on top of a lime button. */
+  --focus: var(--ink);
   --panel-hover: #1a252f;
 }
 
 * { box-sizing: border-box; }
+
+/* The attribute has to beat component display rules (.pair-strip, .cam-frame
+   img): without this an element marked hidden still paints. */
+[hidden] { display: none !important; }
 
 html {
   -webkit-text-size-adjust: 100%;
@@ -40,7 +47,7 @@ body {
 }
 
 a { color: var(--lime); text-decoration: none; }
-a:hover { color: var(--accent-yellow); text-decoration: underline; text-underline-offset: 3px; }
+a:hover { color: #d9ff80; text-decoration: underline; text-underline-offset: 3px; }
 code { font-family: var(--mono); font-size: .92em; color: #cfe0ea; }
 
 h1, h2, h3 {
@@ -53,7 +60,7 @@ p { margin: 0 0 6px; }
 p:last-child { margin-bottom: 0; }
 
 :focus-visible {
-  outline: 2px solid var(--accent-yellow);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -213,7 +220,7 @@ body.terminal-view main {
   border-left-color: var(--lime);
 }
 .nav a:focus-visible {
-  outline: 2px solid var(--accent-yellow);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: 7px;
 }
@@ -323,6 +330,7 @@ body.terminal-view main {
 
 @media (prefers-reduced-motion: reduce) {
   .health-pill::before { animation: none; }
+  .meter i, .cam-frame { transition: none; }
 }
 
 .icon-btn {
@@ -442,8 +450,8 @@ main { padding: 20px 24px 56px; }
   transition: border-color .2s ease, box-shadow .2s ease;
 }
 .kpi:hover {
-  border-color: var(--accent-yellow);
-  box-shadow: 0 0 0 1px var(--accent-yellow);
+  border-color: var(--lime-dim);
+  box-shadow: 0 0 0 1px var(--line);
 }
 .kpi-head {
   display: flex;
@@ -551,7 +559,7 @@ main { padding: 20px 24px 56px; }
 .segmented button.on { background: #c3f4511c; color: var(--lime); }
 .segmented button:hover { color: var(--ink); }
 .segmented button:focus-visible {
-  outline: 2px solid var(--accent-yellow);
+  outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -628,7 +636,7 @@ main { padding: 20px 24px 56px; }
   cursor: default;
 }
 .events-strip .chip:hover {
-  border-color: var(--accent);
+  border-color: var(--lime-dim);
   color: var(--ink);
   background: var(--panel-hover);
 }
@@ -976,7 +984,7 @@ main { padding: 20px 24px 56px; }
 .form input[type="url"] { width: 100%; font-family: var(--mono); font-size: 12px; }
 .form-note { font-size: 11.5px; color: var(--dim); margin-top: 4px; }
 input[type="checkbox"] { accent-color: var(--lime); width: 16px; height: 16px; cursor: pointer; }
-input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-yellow); outline-offset: 2px; }
+input[type="checkbox"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* ------------------------------------------------------------------ dialog */
 dialog {
@@ -1177,11 +1185,16 @@ dialog::backdrop { background: #04070ae0; }
 
 /* ------------------------------------------------------------- device view */
 
+/* One panel system for the whole view: the shared 8px radius, an 8px spacing
+   grid, one accent for state, hairline dividers instead of row cards, and no
+   hover effect that moves a row under the cursor. List headers ("Videos",
+   "Volume") are plain labels, not eyebrows. */
+
 .device-banner {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1189,89 +1202,213 @@ dialog::backdrop { background: #04070ae0; }
   font-size: 13px;
 }
 .device-banner .dot {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--steel); flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--steel);
+  flex: none;
 }
 .device-banner[data-state="ok"] .dot { background: var(--lime); }
 .device-banner[data-state="warn"] .dot { background: var(--amber); }
 .device-banner[data-state="crit"] .dot { background: var(--red); }
-.device-banner .muted { margin-left: auto; }
+.device-banner .muted { margin-left: auto; font: 11.5px var(--mono); }
 
-.pair-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-.pair-card h2 { font-size: 15px; }
-.pair-card .card-sub { max-width: 78ch; }
-
-.live-badge {
-  font: 11px/1 var(--mono);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: #131d08;
-  background: var(--lime);
-  border-radius: 20px;
-  padding: 5px 9px;
-}
-
-.cam-frame {
-  position: relative;
-  margin: 12px 0;
-  aspect-ratio: 16 / 9;
-  background: #04070a;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.cam-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.cam-frame .empty { padding: 20px; text-align: center; }
-
-.device-toolbar {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: 10px 0;
-}
-.device-toolbar label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.device-toolbar label.grow { flex: 1 1 220px; }
-.device-toolbar .mono { font-family: var(--mono); font-size: 12px; }
-
-.toggle-row {
+.pair-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line-soft);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #f2b4413d;
+  border-radius: var(--radius);
+  background: #f2b4410a;
 }
-.toggle-row:last-of-type { border-bottom: 0; }
-.toggle-row .sub { color: var(--muted); font-size: 12px; }
-
-.slider-row {
-  display: grid;
-  grid-template-columns: 128px 1fr 56px;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
-  border-top: 1px solid var(--line-soft);
-  font-size: 12.5px;
+.pair-copy strong { display: block; font-size: 12.5px; font-weight: 600; }
+.pair-copy p {
+  margin: 3px 0 0;
+  max-width: 76ch;
+  font-size: 11.5px;
   color: var(--muted);
 }
-.slider-row output { font-family: var(--mono); font-size: 12px; color: var(--ink); text-align: right; }
-.sliders .slider-row { border-top: 0; padding: 6px 0; }
+.pair-actions { display: flex; gap: 8px; flex: none; }
+
+/* Four values worth a glance; everything else lives under Details. */
+.dev-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 11px 13px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.tile-label { font-size: 11px; color: var(--muted); }
+.tile-value {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-note {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.meter {
+  display: block;
+  height: 3px;
+  margin-top: 7px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.meter i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lime);
+  transition: width .3s ease;
+}
+
+.dev-grid { display: grid; gap: 12px; margin-bottom: 12px; }
+.dev-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.dev-grid.wide-left { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
+
+/* A panel here is a container, not a card you interact with, so the pointer
+   hover on .card is dropped. */
+.dev-card:hover { border-color: var(--line); box-shadow: none; }
+.dev-card h2 { font-size: 13px; }
+.dev-card .card-head { margin-bottom: 12px; gap: 12px; }
+.dev-card .card-head .card-sub { font-size: 11.5px; max-width: 62ch; }
+.card-head .head-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-left: auto;
+}
+
+.live-badge {
+  font: 10px/1 var(--mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #131d08;
+  background: var(--lime);
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+
+.sub-head { font-size: 11px; color: var(--muted); margin: 16px 0 4px; }
+
+/* Camera: the preview is the hero, the switches sit beside it, the clips that
+   came out of it sit underneath the full card width. */
+.cam-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(228px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.cam-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  /* Stopped, the frame is a compact slot so the emptiest thing on the page is
+     not the largest; live, it takes the full 16:9 box the stream fills. */
+  max-height: 240px;
+  background: #04070a;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color .2s ease;
+}
+/* The stopped frame is a quiet slot, not a hole: a soft inset edge and centred
+   label, then the same frame takes a lime hairline once the stream is live. */
+.cam-frame[data-live="false"] {
+  background: radial-gradient(120% 100% at 50% 0%, #0b141b 0%, #04070a 70%);
+  box-shadow: inset 0 0 0 1px #ffffff05;
+}
+.cam-frame[data-live="true"] { border-color: #c3f45140; max-height: none; }
+.cam-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.cam-frame .empty {
+  padding: 16px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--muted);
+  text-align: center;
+}
+
+.cam-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.field-row .field:first-child { grid-column: 1 / -1; }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* Chrome paints the popup arrow over the text, so the field keeps room for it. */
+.field .select { width: 100%; min-width: 0; padding-right: 26px; }
+.capture-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.media-state { margin: 0; font: 11.5px var(--mono); color: var(--muted); }
+.dev-card > .capture-row + .media-state { margin-top: 8px; }
+
+/* Controls: label and state on the left, the one control that owns the row on
+   the right. */
+.rows { display: flex; flex-direction: column; margin: 0; padding: 0; }
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.row:first-child { border-top: 0; padding-top: 2px; }
+.row:last-child { padding-bottom: 2px; }
+.row-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.row-label { font-size: 12.5px; color: var(--ink); }
+.row-sub { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.row-actions { display: flex; gap: 6px; flex: none; }
+.row.stack { display: block; }
+.row.stack .row-main { margin-bottom: 8px; }
+.row .select { max-width: 190px; }
+
+.facts-lite div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+.facts-lite div:first-child { border-top: 0; padding-top: 0; }
+.facts-lite dt { flex: none; color: var(--muted); }
+.facts-lite dd {
+  margin: 0;
+  font: 11.5px var(--mono);
+  color: var(--ink);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
 
 input[type="range"] {
   width: 100%;
@@ -1279,23 +1416,238 @@ input[type="range"] {
   background: transparent;
   cursor: pointer;
 }
-input[type="file"] { font-size: 12px; color: var(--muted); max-width: 100%; }
 
-.btn-row.tight { gap: 6px; }
-
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 10px;
-  margin-top: 12px;
+/* The native file control is the one light-mode widget the browser refuses to
+   restyle, so it is hidden and the label next to it carries the button. */
+.upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
-.gallery figure { margin: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--raised); }
+.upload input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  opacity: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.upload label.btn { cursor: pointer; }
+.upload input:focus-visible + label.btn {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.upload-name {
+  min-width: 0;
+  max-width: 18ch;
+  font: 11px var(--mono);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.playback-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* auto, not a fixed ch width: the longest stream name must not be clipped to
+   "Notificati..." on a phone. */
+.slider-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.slider-row label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slider-row output {
+  font: 11px var(--mono);
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.sliders .slider-row + .slider-row { border-top: 1px solid var(--line-soft); }
+
+/* One list row for every stored file: videos, recordings and uploads share it
+   so the three lists cannot drift apart again. */
+.file-list { list-style: none; margin: 0; padding: 0; }
+.file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 3px;
+  padding: 9px 0 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.file-list > .file-row:first-child { border-top: 0; }
+.file-name {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  font: 11.5px var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-meta {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  font: 11px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.file-actions {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.act {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 11.5px var(--sans);
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color .15s ease;
+}
+.act:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.act.danger:hover { color: var(--red); }
+.file-empty { padding: 10px 0; font-size: 12px; color: var(--muted); font-style: italic; }
+
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 10px; }
+.gallery figure {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--raised);
+}
 .gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
-.gallery figcaption { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; font: 11px/1.3 var(--mono); color: var(--muted); }
-.gallery .empty { padding: 8px 0; }
+.gallery figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  font: 11px var(--mono);
+  color: var(--muted);
+}
+.gallery .file-empty { grid-column: 1 / -1; }
+
+/* Reference material, collapsed: it is read once, not operated. */
+.details-card { padding: 0; margin-bottom: 0; }
+.details-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+.details-card > summary::-webkit-details-marker { display: none; }
+.details-card > summary h2 { font-size: 13px; font-weight: 600; }
+.details-card > summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .15s ease;
+}
+.details-card[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
+.details-card > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: var(--radius);
+}
+.summary-note { font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.details-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  padding: 4px 16px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+.details-body > * { min-width: 0; padding-top: 8px; }
+.details-body .sub-head { margin-top: 0; }
+/* Sensors are reference rows, not a data grid: no box, no hover, so they read
+   the same as the facts list they sit beside. */
+.table.compact {
+  border: 0;
+  border-radius: 0;
+  font-size: 11.5px;
+}
+.table.compact th {
+  padding: 0 0 7px;
+  border-bottom: 1px solid var(--line);
+  background: none;
+}
+.table.compact td { padding: 8px 0; }
+.table.compact tr:hover td { background: none; box-shadow: none; }
+.table.compact tr:last-child td { border-bottom: 0; padding-bottom: 0; }
+
+@media (max-width: 760px) {
+  .cam-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 980px) {
+  .dev-grid.two, .dev-grid.wide-left { grid-template-columns: 1fr; }
+  .details-body { grid-template-columns: 1fr; gap: 8px; }
+}
 
 @media (max-width: 720px) {
-  .slider-row { grid-template-columns: 1fr 1fr; }
-  .slider-row output { text-align: right; }
-  .slider-row label { grid-column: 1 / -1; }
+  .dev-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile-value { font-size: 17px; }
+  .row { align-items: flex-start; }
+  .row .select { max-width: none; }
+}
+
+/* A phone cannot hold a name and three actions on one line: the name keeps its
+   own row, then the size and the actions share the next one. */
+@media (max-width: 560px) {
+  /* A sensor name, its chip and three axis values cannot share 330px: the row
+     becomes a label and a mono value on the line below. */
+  .table.compact thead { display: none; }
+  .table.compact tr { display: block; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+  .table.compact tr:first-child { border-top: 0; padding-top: 0; }
+  .table.compact td { display: block; padding: 0; border: 0; }
+  .table.compact td.right { text-align: left; margin-top: 3px; color: var(--ink); }
+
+  .file-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px 10px;
+  }
+  .file-name { flex: 1 1 100%; }
+  .file-meta { margin-left: 0; }
+  .file-actions { margin-left: auto; }
 }

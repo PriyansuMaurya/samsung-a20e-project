@@ -1348,7 +1348,7 @@ LOGIN_HTML = '''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark"><title>Sign in · Galaxy Console</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23C3F451'/%3E%3Crect x='10' y='10' width='12' height='12' rx='4' fill='%23070A0E'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/console.css?v=8"></head>
+<link rel="stylesheet" href="/console.css?v=14"></head>
 <body class="login-body">
 <main class="login">
   <div class="login-mark" aria-hidden="true"></div>

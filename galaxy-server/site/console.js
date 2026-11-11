@@ -66,13 +66,13 @@
 
   function clock(ts) {
     var d = toDate(ts);
-    if (!d) { return '—'; }
+    if (!d) { return '-'; }
     return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
 
   function hhmm(ts) {
     var d = toDate(ts);
-    if (!d) { return '—'; }
+    if (!d) { return '-'; }
     return pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
@@ -91,7 +91,7 @@
     return Math.round(seconds / 86400) + 'd ago';
   }
 
-  function gb(value) { return value === null || value === undefined ? '—' : value.toFixed(1) + ' GB'; }
+  function gb(value) { return value === null || value === undefined ? '-' : value.toFixed(1) + ' GB'; }
 
   function api(path, options) {
     var opts = Object.assign({ cache: 'no-store', credentials: 'same-origin', headers: {} }, options || {});
@@ -165,15 +165,21 @@
     return match ? match[1] : 'overview';
   }
 
+  // The drawer sits before the shell in the document, so a keyboard user who
+  // opens it would otherwise tab through the page hidden behind the scrim.
   function openDrawer() {
     $('#sidebar').classList.add('open');
     $('#scrim').hidden = false;
     $('#menu').setAttribute('aria-expanded', 'true');
+    var first = $('#nav a');
+    if (first) { first.focus(); }
   }
   function closeDrawer() {
+    var wasOpen = $('#sidebar').classList.contains('open');
     $('#sidebar').classList.remove('open');
     $('#scrim').hidden = true;
     $('#menu').setAttribute('aria-expanded', 'false');
+    if (wasOpen) { $('#menu').focus(); }
   }
 
   // --------------------------------------------------------------- overview
@@ -310,8 +316,8 @@
         ])
       ]),
       el('td', null, [el('span', { class: 'state ' + (service.running ? 'up' : 'down'), text: service.running ? 'running' : 'stopped' })]),
-      el('td', { class: 'right mono', text: service.uptime || '—' }),
-      el('td', { class: 'right mono', text: service.rss_mb === null ? '—' : service.rss_mb + ' MB' })
+      el('td', { class: 'right mono', text: service.uptime || '-' }),
+      el('td', { class: 'right mono', text: service.rss_mb === null ? '-' : service.rss_mb + ' MB' })
     ]);
   }
 
@@ -335,7 +341,7 @@
       var when = item.at ? new Date(item.at.replace(' ', 'T')) : null;
       var css = item.kind === 'admin' ? '' : item.level || '';
       host.appendChild(el('li', null, [
-        el('span', { class: 'when', text: when ? pad(when.getHours()) + ':' + pad(when.getMinutes()) : '—' }),
+        el('span', { class: 'when', text: when ? pad(when.getHours()) + ':' + pad(when.getMinutes()) : '-' }),
         el('span', { class: 'what', text: item.text }),
         el('span', { class: 'kind ' + (options && options.kindClass ? options.kindClass(item) : ''), text: item.kind || '' })
       ]));
@@ -613,7 +619,7 @@
     var body = $('#services-table tbody');
     body.textContent = '';
     (status.services || []).forEach(function (service) {
-      var control = '—';
+      var control = '-';
       if (service.key === 'nginx' || service.key === 'status') {
         control = el('button', {
           class: 'btn small', type: 'button', 'data-action': 'server-restart', 'data-phrase': 'restart',
@@ -635,9 +641,9 @@
           ])
         ]),
         el('td', null, [el('span', { class: 'state ' + (service.running ? 'up' : 'down'), text: service.running ? 'running' : 'stopped' })]),
-        el('td', { class: 'right mono', text: service.uptime || '—' }),
+        el('td', { class: 'right mono', text: service.uptime || '-' }),
         el('td', { class: 'right mono', text: String(service.restarts_24h || 0) }),
-        el('td', { class: 'right mono', text: service.rss_mb === null ? '—' : service.rss_mb + ' MB' }),
+        el('td', { class: 'right mono', text: service.rss_mb === null ? '-' : service.rss_mb + ' MB' }),
         el('td', null, [el('div', { class: 'err', title: service.last_error || '', text: service.last_error || 'none recorded' })]),
         el('td', { class: 'right' }, [control])
       ]));
@@ -654,7 +660,7 @@
       var when = entry.at ? new Date(entry.at.replace(' ', 'T')) : null;
       var outcome = entry.outcome || '';
       host.appendChild(el('li', null, [
-        el('span', { class: 'when', text: when ? pad(when.getHours()) + ':' + pad(when.getMinutes()) : '—' }),
+        el('span', { class: 'when', text: when ? pad(when.getHours()) + ':' + pad(when.getMinutes()) : '-' }),
         el('span', { class: 'what', text: (entry.user || '?') + ' · ' + entry.action }),
         el('span', {
           class: 'kind ' + (outcome === 'ok' || outcome === 'scheduled' ? '' : outcome === 'failed' ? 'crit' : 'warn'),
@@ -680,25 +686,25 @@
           el('span', { class: 'state ' + (last ? (last.ok ? 'up' : 'down') : 'unknown'), text: last ? (last.ok ? 'answering' : 'failing') : 'no check' })
         ]),
         el('div', { class: 'hc-check' }, [
-          el('span', { class: 'hc-ms', text: last && last.ms !== null ? last.ms + ' ms' : (last ? '—' : 'Not monitored') }),
-          el('span', { class: 'hc-when', text: last ? clock(last.ts) + ' · HTTP ' + (last.status || '—') : 'waiting for the first probe' })
+          el('span', { class: 'hc-ms', text: last && last.ms !== null ? last.ms + ' ms' : (last ? '-' : 'Not monitored') }),
+          el('span', { class: 'hc-when', text: last ? clock(last.ts) + ' · HTTP ' + (last.status || '-') : 'waiting for the first probe' })
         ])
       ]));
     });
 
     var tun = status.tunnel || {};
     $('#tunnel-state').textContent = tun.disabled ? 'stopped by an operator' : (tun.ready ? 'connected' : 'not ready');
-    $('#tunnel-id').textContent = tun.connector_id ? tun.connector_id.slice(0, 18) + '…' : '—';
-    $('#tunnel-conns').textContent = tun.connections === null ? '—' : String(tun.connections);
+    $('#tunnel-id').textContent = tun.connector_id ? tun.connector_id.slice(0, 18) + '…' : '-';
+    $('#tunnel-conns').textContent = tun.connections === null ? '-' : String(tun.connections);
     $('#tunnel-requests').textContent = tun.requests === null ? 'not reported' : String(tun.requests);
     $('#tunnel-errors').textContent = tun.errors === null ? 'not reported' : String(tun.errors);
-    $('#tunnel-concurrent').textContent = tun.concurrent === null ? '—' : String(tun.concurrent);
+    $('#tunnel-concurrent').textContent = tun.concurrent === null ? '-' : String(tun.concurrent);
     var codes = tun.response_codes || {};
     $('#tunnel-codes').textContent = Object.keys(codes).length
       ? Object.keys(codes).map(function (code) { return code + ' × ' + codes[code]; }).join(' · ')
       : 'none yet';
     $('#tunnel-runtime').textContent = tun.memory_mb === null || tun.memory_mb === undefined
-      ? '—' : tun.memory_mb + ' MB · ' + (tun.goroutines || 0) + ' goroutines';
+      ? '-' : tun.memory_mb + ' MB · ' + (tun.goroutines || 0) + ' goroutines';
 
     var table = $('#host-table tbody');
     table.textContent = '';
@@ -714,7 +720,7 @@
             text: last ? (last.ok ? 'HTTPS ' + last.status : 'failed') : 'Not monitored'
           })
         ]),
-        el('td', { class: 'right mono', text: last && last.ms !== null ? last.ms + ' ms' : '—' })
+        el('td', { class: 'right mono', text: last && last.ms !== null ? last.ms + ' ms' : '-' })
       ]));
     });
   }
@@ -738,7 +744,7 @@
       } else {
         data.lines.slice().reverse().forEach(function (line) {
           host.appendChild(el('li', null, [
-            el('span', { class: 'lt', text: line.ts || '—' }),
+            el('span', { class: 'lt', text: line.ts || '-' }),
             el('span', { class: 'ls ' + line.sev, text: line.sev }),
             el('span', { class: 'lm', text: line.text })
           ]));
@@ -797,7 +803,7 @@
       $('#telemetry-spool').textContent = (data.spool_events || 0) + ' events · ' +
         (data.spool_kb || 0) + ' kB';
       $('#telemetry-retention').textContent = data.retention_days
-        ? data.retention_days + ' days' : '—';
+        ? data.retention_days + ' days' : '-';
       $('#telemetry-last-success').textContent = data.last_success_at || 'never';
       $('#telemetry-last-error').textContent = data.last_error || 'none';
       var note = 'Events are sent to Axiom as well as kept in the local files.';
@@ -810,7 +816,7 @@
 
   function renderBuild(status) {
     $('#build-device').textContent = status.host.device;
-    $('#build-android').textContent = (status.host.android || '—') + ' · ' + status.host.arch;
+    $('#build-android').textContent = (status.host.android || '-') + ' · ' + status.host.arch;
     $('#build-kernel').textContent = status.host.kernel;
     $('#build-python').textContent = status.host.python;
     $('#build-nginx').textContent = status.versions.nginx || 'not found';
@@ -1213,8 +1219,7 @@
       var health = summary.health || {};
       var camera = health.camera_open ? 'camera ' + health.camera_open : 'camera idle';
       if (health.ok) {
-        deviceBanner('ok', 'Control app running',
-          (health.uptime_s || 0) + 's uptime · ' + camera);
+        deviceBanner('ok', 'Control app running', camera);
       } else {
         deviceBanner('crit', 'Control app not answering', summary.error || '');
         return;
@@ -1270,7 +1275,9 @@
       return camera.id === $('#cam-id').value;
     })[0] || (caps.cameras || [])[0];
     var sizes = (picked && picked.jpeg_sizes) || [];
-    select.appendChild(el('option', { value: '', text: 'auto (max 1080p)' }));
+    // Short label: the popup is narrow once the card is split in two, and the
+    // full list of sizes is one click away in the same menu.
+    select.appendChild(el('option', { value: '', text: 'auto' }));
     sizes.slice(0, 12).forEach(function (size) {
       select.appendChild(el('option', { value: size, text: size }));
     });
@@ -1298,10 +1305,19 @@
   }
 
   function mb(value) {
-    if (typeof value !== 'number') { return '—'; }
-    return value >= 1024 * 1024 * 1024
-      ? (value / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
-      : Math.round(value / (1024 * 1024)) + ' MB';
+    if (typeof value !== 'number') { return '-'; }
+    if (value >= 1024 * 1024 * 1024) { return (value / (1024 * 1024 * 1024)).toFixed(1) + ' GB'; }
+    // Recordings are often under a megabyte, where "0 MB" said nothing.
+    if (value < 1024 * 1024) { return Math.round(value / 1024) + ' kB'; }
+    return Math.round(value / (1024 * 1024)) + ' MB';
+  }
+
+  function duration(seconds) {
+    var total = Math.max(0, Math.round(seconds || 0));
+    if (total < 60) { return total + 's'; }
+    var minutes = Math.floor(total / 60);
+    if (minutes < 60) { return minutes + 'm ' + (total % 60) + 's'; }
+    return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
   }
 
   function renderPower(summary) {
@@ -1309,31 +1325,43 @@
     var storage = summary.storage || {};
     var folders = storage.folders || {};
     var health = summary.health || {};
-    $('#dev-battery').textContent = typeof battery.percentage === 'number'
-      ? battery.percentage + '% · ' + (battery.voltage_mv || '?') + ' mV' : '—';
-    $('#dev-charging').textContent = battery.plugged ? 'on the charger' : 'on battery';
+    var percent = typeof battery.percentage === 'number' ? battery.percentage : null;
+    $('#dev-battery').textContent = percent === null ? '-' : percent + '%';
+    $('#dev-battery-note').textContent = [
+      battery.plugged ? 'charging' : 'on battery',
+      typeof battery.voltage_mv === 'number' ? battery.voltage_mv + ' mV' : ''
+    ].filter(Boolean).join(' · ');
+    $('#battery-meter').style.width = percent === null
+      ? '0' : Math.max(2, Math.min(100, percent)) + '%';
+    $('#dev-free').textContent = mb(storage.free_bytes);
+    $('#dev-free-note').textContent = 'free of ' + mb(storage.total_bytes);
     $('#dev-temp').textContent = typeof battery.temperature_c === 'number'
-      ? battery.temperature_c.toFixed(1) + ' °C' : '—';
-    $('#dev-free').textContent = mb(storage.free_bytes) + ' free of ' + mb(storage.total_bytes);
+      ? battery.temperature_c.toFixed(1) + ' °C' : '-';
     $('#dev-photos').textContent = ((folders.photos || {}).count || 0) + ' · ' +
       mb((folders.photos || {}).bytes || 0);
     $('#dev-recordings').textContent = ((folders.recordings || {}).count || 0) + ' · ' +
       mb((folders.recordings || {}).bytes || 0);
-    $('#dev-uptime').textContent = (health.uptime_s || 0) + 's';
+    $('#dev-uptime').textContent = duration(health.uptime_s);
     renderConnectivity(summary.connectivity || {});
   }
 
   function renderConnectivity(net) {
+    // The tile carries the two things worth glancing at; the full sentence
+    // stays under Details rather than stretching a status tile across a line.
     var kinds = [];
-    if (net.wifi) { kinds.push('WiFi'); }
-    if (net.cellular) { kinds.push('cellular'); }
-    if (!kinds.length) { kinds.push('offline'); }
+    if (net.wifi) { kinds.push('Wi-Fi'); }
+    if (net.cellular) { kinds.push('Cellular'); }
+    if (!kinds.length) { kinds.push('Offline'); }
     if (net.metered) { kinds.push('metered'); }
     if (net.validated) { kinds.push('validated'); }
     var speed = net.down_mbps ? net.down_mbps + '/' + (net.up_mbps || 0) + ' Mbps'
       : net.link_mbps ? net.link_mbps + ' Mbps link' : '';
-    var wifi = net.wifi_enabled === undefined ? '' : (net.wifi_enabled ? 'WiFi on' : 'WiFi off');
-    $('#dev-network').textContent = kinds.join(' · ') +
+    var wifi = net.wifi_enabled === undefined ? '' : (net.wifi_enabled ? 'Wi-Fi on' : 'Wi-Fi off');
+    $('#dev-network').textContent = kinds[0];
+    $('#dev-network-note').textContent = [net.ssid, speed,
+      net.rssi_dbm ? net.rssi_dbm + ' dBm' : ''].filter(Boolean).join(' · ') ||
+      (net.interface || 'no address');
+    $('#dev-network-detail').textContent = kinds.join(' · ') +
       (net.ssid ? ' · ' + net.ssid : '') +
       (speed ? ' · ' + speed : '') + (wifi ? ' · ' + wifi : '') +
       (net.rssi_dbm ? ' · ' + net.rssi_dbm + ' dBm' : '');
@@ -1341,8 +1369,8 @@
       return value.indexOf('fe80') !== 0;
     });
     $('#dev-address').textContent = addresses.join(', ') ||
-      (net.interface ? net.interface + ' (no address)' : '—');
-    $('#dev-bluetooth').textContent = net.bluetooth_enabled === undefined ? '—'
+      (net.interface ? net.interface + ' (no address)' : '-');
+    $('#dev-bluetooth').textContent = net.bluetooth_enabled === undefined ? '-'
       : (net.bluetooth_enabled ? 'on' : 'off');
     $('#dev-airplane').textContent = net.airplane_mode ? 'on' : 'off';
   }
@@ -1395,10 +1423,15 @@
     }
     names.forEach(function (name) {
       var sensor = payload[name] || {};
-      var values = (sensor.values || []).join(', ') || '—';
+      var values = (sensor.values || []).join(', ') || '-';
+      // "accelerometer LSM6DSL Accelerometer" said it twice: the row leads with
+      // the human name, the chip model follows without repeating it.
+      var label = name.charAt(0).toUpperCase() + name.slice(1);
+      var model = (sensor.name || '').replace(
+        new RegExp('\\s*' + name.replace(/[^a-z0-9]/gi, '') + '$', 'i'), '').trim();
       body.appendChild(el('tr', {}, [
-        el('td', {}, [el('strong', { text: name }),
-          el('span', { class: 'muted', text: ' ' + (sensor.name || '') })]),
+        el('td', {}, [el('strong', { text: label }),
+          model ? el('span', { class: 'muted', text: ' ' + model }) : null]),
         el('td', { class: 'right mono', text: values })
       ]));
     });
@@ -1450,36 +1483,33 @@
 
   function renderRecordings(files) {
     deviceState.recordings = files;
-    var body = $('#recordings-table').querySelector('tbody');
-    body.textContent = '';
+    var list = $('#recordings-list');
+    list.textContent = '';
     if (!files.length) {
-      body.appendChild(el('tr', {}, [el('td', { colspan: '4', class: 'empty',
-        text: 'No recordings yet.' })]));
+      list.appendChild(el('li', { class: 'file-empty', text: 'No recordings yet.' }));
       return;
     }
     files.slice().sort(function (a, b) { return b.modified - a.modified; }).forEach(function (file) {
-      body.appendChild(el('tr', {}, [
-        el('td', { class: 'mono', text: file.file }),
-        el('td', { class: 'right', text: mb(file.bytes) }),
-        el('td', { class: 'right', text: hhmm(file.modified / 1000) }),
-        el('td', { class: 'right' }, [
-          el('div', { class: 'btn-row tight' }, [
-            el('button', { class: 'btn small', type: 'button', text: 'Play',
-              onclick: function () {
-                deviceControl('recording-play', { file: file.file }).then(function () {
-                  toast('Playing ' + file.file + ' on the phone');
-                }).catch(function (error) { toast(error.message, 'error'); });
-              } }),
-            el('a', { class: 'btn small', href: '/api/device/recording?file=' +
-              encodeURIComponent(file.file), text: 'Download' }),
-            el('button', { class: 'btn small', type: 'button', text: 'Delete',
-              onclick: function () {
-                deviceControl('recording-delete', { file: file.file }).then(function () {
-                  toast('Recording deleted');
-                  loadRecordings();
-                }).catch(function (error) { toast(error.message, 'error'); });
-              } })
-          ])
+      list.appendChild(el('li', { class: 'file-row' }, [
+        el('span', { class: 'file-name', text: file.file }),
+        el('span', { class: 'file-meta',
+          text: mb(file.bytes) + ' · ' + hhmm(file.modified / 1000) }),
+        el('span', { class: 'file-actions' }, [
+          el('button', { class: 'act', type: 'button', text: 'Play',
+            onclick: function () {
+              deviceControl('recording-play', { file: file.file }).then(function () {
+                toast('Playing ' + file.file + ' on the phone');
+              }).catch(function (error) { toast(error.message, 'error'); });
+            } }),
+          el('a', { class: 'act', href: '/api/device/recording?file=' +
+            encodeURIComponent(file.file), text: 'Download' }),
+          el('button', { class: 'act danger', type: 'button', text: 'Delete',
+            onclick: function () {
+              deviceControl('recording-delete', { file: file.file }).then(function () {
+                toast('Recording deleted');
+                loadRecordings();
+              }).catch(function (error) { toast(error.message, 'error'); });
+            } })
         ])
       ]));
     });
@@ -1493,34 +1523,31 @@
 
   function renderMedia(files) {
     deviceState.media = files;
-    var body = $('#media-table').querySelector('tbody');
-    body.textContent = '';
+    var list = $('#media-list');
+    list.textContent = '';
     if (!files.length) {
-      body.appendChild(el('tr', {}, [el('td', { colspan: '3', class: 'empty',
-        text: 'No uploaded media.' })]));
+      list.appendChild(el('li', { class: 'file-empty', text: 'No uploaded media.' }));
       return;
     }
     files.forEach(function (file) {
-      body.appendChild(el('tr', {}, [
-        el('td', { class: 'mono', text: file.file }),
-        el('td', { class: 'right', text: mb(file.bytes) }),
-        el('td', { class: 'right' }, [
-          el('div', { class: 'btn-row tight' }, [
-            el('button', { class: 'btn small', type: 'button', text: 'Play',
-              onclick: function () {
-                deviceControl('media-play', { file: file.file }).then(function () {
-                  $('#media-note').textContent = 'Playing ' + file.file + ' on the phone';
-                  toast('Playing on the phone');
-                }).catch(function (error) { toast(error.message, 'error'); });
-              } }),
-            el('button', { class: 'btn small', type: 'button', text: 'Delete',
-              onclick: function () {
-                deviceControl('media-delete', { file: file.file }).then(function () {
-                  toast('File deleted');
-                  loadMedia();
-                }).catch(function (error) { toast(error.message, 'error'); });
-              } })
-          ])
+      list.appendChild(el('li', { class: 'file-row' }, [
+        el('span', { class: 'file-name', text: file.file }),
+        el('span', { class: 'file-meta', text: mb(file.bytes) }),
+        el('span', { class: 'file-actions' }, [
+          el('button', { class: 'act', type: 'button', text: 'Play',
+            onclick: function () {
+              deviceControl('media-play', { file: file.file }).then(function () {
+                $('#media-note').textContent = 'Playing ' + file.file + ' on the phone';
+                toast('Playing on the phone');
+              }).catch(function (error) { toast(error.message, 'error'); });
+            } }),
+          el('button', { class: 'act danger', type: 'button', text: 'Delete',
+            onclick: function () {
+              deviceControl('media-delete', { file: file.file }).then(function () {
+                toast('File deleted');
+                loadMedia();
+              }).catch(function (error) { toast(error.message, 'error'); });
+            } })
         ])
       ]));
     });
@@ -1543,10 +1570,10 @@
     image.src = '/api/device/camera/stream' + query;
     image.hidden = false;
     $('#cam-placeholder').hidden = true;
+    $('#cam-frame').dataset.live = 'true';
     $('#cam-live').hidden = false;
     $('#cam-toggle').textContent = 'Stop preview';
     $('#cam-toggle').setAttribute('aria-pressed', 'true');
-    $('#video-toggle').disabled = false;
     deviceState.cameraOn = true;
   }
 
@@ -1556,10 +1583,12 @@
     image.hidden = true;
     image.removeAttribute('src');
     $('#cam-placeholder').hidden = false;
+    $('#cam-frame').dataset.live = 'false';
     $('#cam-live').hidden = true;
     $('#cam-toggle').textContent = 'Start preview';
     $('#cam-toggle').setAttribute('aria-pressed', 'false');
-    $('#video-toggle').disabled = true;
+    // Record stays available: the app reopens the sensor for a take, so the
+    // preview is a way to watch, not a precondition.
     $('#video-toggle').textContent = 'Record video';
     clearInterval(deviceState.videoTimer);
     deviceState.videoStarted = 0;
@@ -1604,29 +1633,27 @@
 
   function renderVideos(files) {
     deviceState.videos = files;
-    var body = $('#videos-table').querySelector('tbody');
-    body.textContent = '';
+    var list = $('#videos-list');
+    list.textContent = '';
     if (!files.length) {
-      body.appendChild(el('tr', {}, [el('td', { colspan: '3', class: 'empty',
-        text: 'No videos yet.' })]));
+      list.appendChild(el('li', { class: 'file-empty', text: 'No videos yet.' }));
       return;
     }
     files.slice().sort(function (a, b) { return b.modified - a.modified; }).forEach(function (file) {
-      body.appendChild(el('tr', {}, [
-        el('td', { class: 'mono', text: file.file }),
-        el('td', { class: 'right', text: mb(file.bytes) }),
-        el('td', { class: 'right' }, [
-          el('div', { class: 'btn-row tight' }, [
-            el('a', { class: 'btn small', href: '/api/device/video?file=' +
-              encodeURIComponent(file.file), text: 'Download' }),
-            el('button', { class: 'btn small', type: 'button', text: 'Delete',
-              onclick: function () {
-                deviceControl('video-delete', { file: file.file }).then(function () {
-                  toast('Video deleted');
-                  loadVideos();
-                }).catch(function (error) { toast(error.message, 'error'); });
-              } })
-          ])
+      list.appendChild(el('li', { class: 'file-row' }, [
+        el('span', { class: 'file-name', text: file.file }),
+        el('span', { class: 'file-meta',
+          text: mb(file.bytes) + ' · ' + hhmm(file.modified / 1000) }),
+        el('span', { class: 'file-actions' }, [
+          el('a', { class: 'act', href: '/api/device/video?file=' +
+            encodeURIComponent(file.file), text: 'Download' }),
+          el('button', { class: 'act danger', type: 'button', text: 'Delete',
+            onclick: function () {
+              deviceControl('video-delete', { file: file.file }).then(function () {
+                toast('Video deleted');
+                loadVideos();
+              }).catch(function (error) { toast(error.message, 'error'); });
+            } })
         ])
       ]));
     });
@@ -1839,6 +1866,7 @@
     });
     $('#media-file').addEventListener('change', function () {
       var file = this.files && this.files[0];
+      $('#media-file-name').textContent = file ? file.name : 'No file chosen';
       this.value = '';
       if (file) { uploadMedia(file); }
     });

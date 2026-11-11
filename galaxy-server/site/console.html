@@ -8,7 +8,7 @@
 <title>Galaxy Console</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23C3F451'/%3E%3Crect x='10' y='10' width='12' height='12' rx='4' fill='%23070A0E'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/vendor/xterm.css">
-<link rel="stylesheet" href="console.css?v=12">
+<link rel="stylesheet" href="console.css?v=14">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -59,34 +59,34 @@
 
       <div class="kpis" id="kpis">
         <article class="kpi">
-          <div class="kpi-head"><span>Uptime</span><span class="stamp" data-stamp="uptime">—</span></div>
-          <strong class="num" id="kpi-uptime">—</strong>
+          <div class="kpi-head"><span>Uptime</span><span class="stamp" data-stamp="uptime">-</span></div>
+          <strong class="num" id="kpi-uptime">-</strong>
           <p class="sub" id="kpi-uptime-sub">device boot</p>
         </article>
         <article class="kpi">
-          <div class="kpi-head"><span>CPU load</span><span class="stamp" data-stamp="cpu">—</span></div>
-          <strong class="num" id="kpi-cpu">—</strong>
+          <div class="kpi-head"><span>CPU load</span><span class="stamp" data-stamp="cpu">-</span></div>
+          <strong class="num" id="kpi-cpu">-</strong>
           <p class="sub" id="kpi-cpu-sub">server processes</p>
         </article>
         <article class="kpi">
-          <div class="kpi-head"><span>Memory</span><span class="stamp" data-stamp="memory">—</span></div>
-          <strong class="num" id="kpi-memory">—</strong>
-          <p class="sub" id="kpi-memory-sub">—</p>
+          <div class="kpi-head"><span>Memory</span><span class="stamp" data-stamp="memory">-</span></div>
+          <strong class="num" id="kpi-memory">-</strong>
+          <p class="sub" id="kpi-memory-sub">-</p>
         </article>
         <article class="kpi">
-          <div class="kpi-head"><span>Free storage</span><span class="stamp" data-stamp="storage">—</span></div>
-          <strong class="num" id="kpi-storage">—</strong>
-          <p class="sub" id="kpi-storage-sub">—</p>
+          <div class="kpi-head"><span>Free storage</span><span class="stamp" data-stamp="storage">-</span></div>
+          <strong class="num" id="kpi-storage">-</strong>
+          <p class="sub" id="kpi-storage-sub">-</p>
         </article>
         <article class="kpi">
-          <div class="kpi-head"><span>Battery</span><span class="stamp" data-stamp="battery">—</span></div>
-          <strong class="num" id="kpi-battery">—</strong>
-          <p class="sub" id="kpi-battery-sub">—</p>
+          <div class="kpi-head"><span>Battery</span><span class="stamp" data-stamp="battery">-</span></div>
+          <strong class="num" id="kpi-battery">-</strong>
+          <p class="sub" id="kpi-battery-sub">-</p>
         </article>
         <article class="kpi">
-          <div class="kpi-head"><span>Tunnel requests</span><span class="stamp" data-stamp="tunnel">—</span></div>
-          <strong class="num" id="kpi-requests">—</strong>
-          <p class="sub" id="kpi-requests-sub">—</p>
+          <div class="kpi-head"><span>Tunnel requests</span><span class="stamp" data-stamp="tunnel">-</span></div>
+          <strong class="num" id="kpi-requests">-</strong>
+          <p class="sub" id="kpi-requests-sub">-</p>
         </article>
       </div>
 
@@ -226,14 +226,14 @@
         <section class="card">
           <div class="card-head"><div><h2 class="page-h2">Cloudflare Tunnel</h2><p class="card-sub">Connector health straight from cloudflared's own metrics.</p></div></div>
           <dl class="facts" id="tunnel-facts">
-            <div><dt>State</dt><dd id="tunnel-state">—</dd></div>
-            <div><dt>Connector</dt><dd id="tunnel-id">—</dd></div>
-            <div><dt>Connections</dt><dd id="tunnel-conns">—</dd></div>
-            <div><dt>Requests</dt><dd id="tunnel-requests">—</dd></div>
-            <div><dt>Request errors</dt><dd id="tunnel-errors">—</dd></div>
-            <div><dt>Concurrent</dt><dd id="tunnel-concurrent">—</dd></div>
-            <div><dt>Response codes</dt><dd id="tunnel-codes">—</dd></div>
-            <div><dt>Connector runtime</dt><dd id="tunnel-runtime">—</dd></div>
+            <div><dt>State</dt><dd id="tunnel-state">-</dd></div>
+            <div><dt>Connector</dt><dd id="tunnel-id">-</dd></div>
+            <div><dt>Connections</dt><dd id="tunnel-conns">-</dd></div>
+            <div><dt>Requests</dt><dd id="tunnel-requests">-</dd></div>
+            <div><dt>Request errors</dt><dd id="tunnel-errors">-</dd></div>
+            <div><dt>Concurrent</dt><dd id="tunnel-concurrent">-</dd></div>
+            <div><dt>Response codes</dt><dd id="tunnel-codes">-</dd></div>
+            <div><dt>Connector runtime</dt><dd id="tunnel-runtime">-</dd></div>
           </dl>
           <div class="btn-row">
             <button class="btn" type="button" data-action="tunnel-restart" data-phrase="restart the tunnel">Restart tunnel</button>
@@ -269,157 +269,210 @@
     <section class="view" id="view-device" hidden>
       <div class="device-banner" id="device-banner" data-state="unknown">
         <span class="dot" aria-hidden="true"></span>
-        <span id="device-banner-text">Checking the control app…</span>
+        <span id="device-banner-text">Checking the control app</span>
         <span class="muted" id="device-banner-detail"></span>
       </div>
 
-      <form class="card pair-card" id="device-pair-form">
-        <div>
-          <h2>Pair the phone app</h2>
-          <p class="card-sub">The Galaxy Device app listens on loopback only. Pair once — here, or with <code>serverctl device-pair</code> on the phone — and it stays paired across reboots and deploys. The dashboard creates the token, the app stores it, and the browser never sees it.</p>
+      <form class="pair-strip" id="device-pair-form" hidden>
+        <div class="pair-copy">
+          <strong>The phone app is not paired</strong>
+          <p>The dashboard creates the token and the app stores it. Pair once; it survives reboots and deploys.</p>
         </div>
-        <div class="btn-row">
+        <div class="pair-actions">
           <button class="btn primary" type="submit">Pair now</button>
           <button class="btn" type="button" id="device-unpair">Forget pairing</button>
         </div>
       </form>
 
-      <div class="two-col">
-        <section class="card">
-          <div class="card-head">
-            <div><h2>Camera</h2><p class="card-sub">One repeating JPEG stream feeds this preview, snapshots and the gallery. The sensor stays exclusive to this app while it runs.</p></div>
-            <span class="live-badge" id="cam-live" hidden>live</span>
-          </div>
-          <div class="cam-frame">
-            <img id="cam-preview" alt="Live camera preview from the phone" hidden>
-            <p class="empty" id="cam-placeholder">Preview stopped. Start it to see what the phone sees.</p>
-          </div>
-          <div class="device-toolbar">
-            <label>Camera <select id="cam-id" class="select"></select></label>
-            <label>Size <select id="cam-size" class="select"></select></label>
-            <label>Rate <select id="cam-fps" class="select"><option value="2">2 fps</option><option value="4" selected>4 fps</option><option value="8">8 fps</option></select></label>
-            <button class="btn primary" type="button" id="cam-toggle" aria-pressed="false">Start preview</button>
-            <button class="btn" type="button" id="video-toggle" disabled>Record video</button>
-            <button class="btn" type="button" id="cam-snapshot">Take photo</button>
-          </div>
-          <p class="footnote" id="cam-note">Video is recorded at 720p30 with sound while this preview keeps running, because both share one camera session. Sound is dropped while the microphone is already streaming or recording.</p>
-          <p class="mono muted" id="video-state">not recording</p>
-          <div class="table-wrap">
-            <table class="table" id="videos-table">
-              <thead><tr><th>Video</th><th class="right">Size</th><th class="right">Actions</th></tr></thead>
-              <tbody><tr><td colspan="3" class="empty">No videos yet.</td></tr></tbody>
-            </table>
-          </div>
-        </section>
+      <div class="dev-tiles">
+        <div class="tile">
+          <span class="tile-label">Battery</span>
+          <strong class="tile-value" id="dev-battery">-</strong>
+          <span class="tile-note" id="dev-battery-note">-</span>
+          <span class="meter" aria-hidden="true"><i id="battery-meter"></i></span>
+        </div>
+        <div class="tile">
+          <span class="tile-label">Network</span>
+          <strong class="tile-value" id="dev-network">-</strong>
+          <span class="tile-note" id="dev-network-note">-</span>
+        </div>
+        <div class="tile">
+          <span class="tile-label">Storage</span>
+          <strong class="tile-value" id="dev-free">-</strong>
+          <span class="tile-note" id="dev-free-note">-</span>
+        </div>
+        <div class="tile">
+          <span class="tile-label">App uptime</span>
+          <strong class="tile-value" id="dev-uptime">-</strong>
+          <span class="tile-note">since the last start</span>
+        </div>
+      </div>
 
-        <section class="card">
-          <div class="card-head"><div><h2>Accessories</h2><p class="card-sub">Flashlight, vibration, brightness and each audio stream.</p></div></div>
-          <div class="toggle-row">
-            <div><strong>Flashlight</strong><p class="sub" id="torch-state">Off</p></div>
-            <button class="btn" type="button" id="torch-toggle" aria-pressed="false">Turn on</button>
+      <section class="card dev-card">
+        <div class="card-head">
+          <div>
+            <h2>Camera</h2>
+            <p class="card-sub">720p30 with sound, beside the preview. Sound is dropped while the microphone is busy.</p>
           </div>
-          <div class="toggle-row">
-            <div><strong>Vibration</strong><p class="sub">Short buzz on the phone, for finding it nearby.</p></div>
-            <div class="btn-row tight">
-              <button class="btn small" type="button" data-vibrate="120">Short</button>
-              <button class="btn small" type="button" data-vibrate="1200">Long</button>
+          <div class="head-tools">
+            <span class="live-badge" id="cam-live" hidden>live</span>
+            <button class="btn primary" type="button" id="cam-toggle" aria-pressed="false">Start preview</button>
+          </div>
+        </div>
+        <div class="cam-layout">
+          <div class="cam-frame" id="cam-frame" data-live="false">
+            <img id="cam-preview" alt="Live camera preview from the phone" hidden>
+            <p class="empty" id="cam-placeholder">Preview stopped</p>
+          </div>
+          <div class="cam-side">
+            <div class="field-row">
+              <label class="field">Camera<select id="cam-id" class="select"></select></label>
+              <label class="field">Size<select id="cam-size" class="select"></select></label>
+              <label class="field">Rate
+                <select id="cam-fps" class="select">
+                  <option value="2">2 fps</option>
+                  <option value="4" selected>4 fps</option>
+                  <option value="8">8 fps</option>
+                </select>
+              </label>
+            </div>
+            <div class="capture-row">
+              <button class="btn" type="button" id="video-toggle">Record video</button>
+              <button class="btn" type="button" id="cam-snapshot">Take photo</button>
+            </div>
+            <p class="media-state" id="video-state">not recording</p>
+          </div>
+        </div>
+        <div class="sub-head">Videos</div>
+        <ul class="file-list" id="videos-list">
+          <li class="file-empty">No videos yet.</li>
+        </ul>
+      </section>
+
+      <div class="dev-grid two">
+        <section class="card dev-card">
+          <div class="card-head"><div><h2>Controls</h2></div></div>
+          <div class="rows">
+            <div class="row">
+              <div class="row-main">
+                <span class="row-label">Flashlight</span>
+                <span class="row-sub" id="torch-state">Off</span>
+              </div>
+              <button class="btn small" type="button" id="torch-toggle" aria-pressed="false">Turn on</button>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <span class="row-label">Vibration</span>
+                <span class="row-sub">Find the phone by feel</span>
+              </div>
+              <div class="row-actions">
+                <button class="btn small" type="button" data-vibrate="120">Short</button>
+                <button class="btn small" type="button" data-vibrate="1200">Long</button>
+              </div>
+            </div>
+            <div class="row stack">
+              <div class="row-main">
+                <label class="row-label" for="brightness">Brightness</label>
+                <span class="row-sub" id="brightness-value">-</span>
+              </div>
+              <input type="range" id="brightness" min="1" max="255" step="1" value="128">
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <label class="row-label" for="rotation">Rotation</label>
+                <span class="row-sub" id="rotation-state">-</span>
+              </div>
+              <select id="rotation" class="select">
+                <option value="auto">Automatic</option>
+                <option value="0">Upright</option>
+                <option value="90">Landscape left</option>
+                <option value="180">Upside down</option>
+                <option value="270">Landscape right</option>
+              </select>
             </div>
           </div>
-          <div class="slider-row">
-            <label for="brightness">Screen brightness</label>
-            <input type="range" id="brightness" min="1" max="255" step="1" value="128">
-            <output id="brightness-value">—</output>
+        </section>
+
+        <section class="card dev-card">
+          <div class="card-head">
+            <div><h2>Sound</h2></div>
+            <div class="head-tools"><span class="live-badge" id="mic-live" hidden>live</span></div>
           </div>
-          <div class="slider-row">
-            <label for="rotation">Screen rotation</label>
-            <select id="rotation" class="select">
-              <option value="auto">Automatic</option>
-              <option value="0">Upright</option>
-              <option value="90">Landscape left</option>
-              <option value="180">Upside down</option>
-              <option value="270">Landscape right</option>
-            </select>
-            <output id="rotation-state">—</output>
+          <div class="capture-row">
+            <button class="btn" type="button" id="mic-listen">Listen live</button>
+            <button class="btn" type="button" id="mic-record">Start recording</button>
           </div>
+          <p class="media-state" id="mic-timer">not recording</p>
+          <div class="sub-head">Volume</div>
           <div id="volume-sliders" class="sliders"></div>
+          <div class="sub-head">Recordings</div>
+          <ul class="file-list" id="recordings-list">
+            <li class="file-empty">No recordings yet.</li>
+          </ul>
         </section>
       </div>
 
-      <div class="two-col">
-        <section class="card">
+      <div class="dev-grid wide-left">
+        <section class="card dev-card">
           <div class="card-head">
-            <div><h2>Microphone</h2><p class="card-sub">Live listening in this tab and 16 kHz WAV recordings stored on the phone. Only one AudioRecord exists, so both share it.</p></div>
-            <span class="live-badge" id="mic-live" hidden>live</span>
+            <div>
+              <h2>Photos</h2>
+              <p class="card-sub">Stills at the current preview size, in the app's private storage.</p>
+            </div>
+            <span class="muted" id="photo-count"></span>
           </div>
-          <div class="device-toolbar">
-            <button class="btn primary" type="button" id="mic-listen">Listen live</button>
-            <button class="btn" type="button" id="mic-record">Start recording</button>
-            <span class="mono muted" id="mic-timer">not recording</span>
-          </div>
-          <p class="footnote">Two-way audio needs the phone to play what this browser sends; upload a clip under Media and it plays on the phone speaker while the microphone keeps streaming here.</p>
-          <div class="table-wrap">
-            <table class="table" id="recordings-table">
-              <thead><tr><th>Recording</th><th class="right">Size</th><th class="right">Created</th><th class="right">Actions</th></tr></thead>
-              <tbody><tr><td colspan="4" class="empty">No recordings yet.</td></tr></tbody>
-            </table>
-          </div>
+          <div class="gallery" id="photo-grid"><p class="file-empty">No photos yet.</p></div>
         </section>
 
-        <section class="card">
-          <div class="card-head"><div><h2>Media</h2><p class="card-sub">Upload audio to the phone, then play it through its speaker.</p></div></div>
-          <div class="device-toolbar">
-            <label class="grow">Upload <input type="file" id="media-file" accept="audio/*,video/mp4"></label>
+        <section class="card dev-card">
+          <div class="card-head">
+            <div>
+              <h2>Media</h2>
+              <p class="card-sub">Upload audio and play it on the phone speaker.</p>
+            </div>
           </div>
-          <p class="footnote" id="media-note">Nothing playing.</p>
-          <div class="table-wrap">
-            <table class="table" id="media-table">
-              <thead><tr><th>File</th><th class="right">Size</th><th class="right">Actions</th></tr></thead>
-              <tbody><tr><td colspan="3" class="empty">No uploaded media.</td></tr></tbody>
-            </table>
+          <div class="upload">
+            <input type="file" id="media-file" accept="audio/*,video/mp4">
+            <label class="btn small" for="media-file">Upload audio</label>
+            <span class="upload-name" id="media-file-name">No file chosen</span>
           </div>
-          <div class="btn-row">
+          <div class="playback-row">
+            <p class="media-state" id="media-note">Nothing playing.</p>
             <button class="btn small" type="button" id="media-stop">Stop playback</button>
           </div>
+          <ul class="file-list" id="media-list">
+            <li class="file-empty">No uploaded media.</li>
+          </ul>
         </section>
       </div>
 
-      <div class="two-col">
-        <section class="card">
-          <div class="card-head"><div><h2>Power and storage</h2><p class="card-sub">Read from the app, not from Termux.</p></div></div>
-          <dl class="facts" id="device-facts">
-            <div><dt>Battery</dt><dd id="dev-battery">—</dd></div>
-            <div><dt>Charging</dt><dd id="dev-charging">—</dd></div>
-            <div><dt>Temperature</dt><dd id="dev-temp">—</dd></div>
-            <div><dt>Free space</dt><dd id="dev-free">—</dd></div>
-            <div><dt>Photos</dt><dd id="dev-photos">—</dd></div>
-            <div><dt>Recordings</dt><dd id="dev-recordings">—</dd></div>
-            <div><dt>App uptime</dt><dd id="dev-uptime">—</dd></div>
-            <div><dt>Permissions</dt><dd id="dev-perms">—</dd></div>
-            <div><dt>Network</dt><dd id="dev-network">—</dd></div>
-            <div><dt>Address</dt><dd id="dev-address">—</dd></div>
-            <div><dt>Bluetooth</dt><dd id="dev-bluetooth">—</dd></div>
-            <div><dt>Airplane mode</dt><dd id="dev-airplane">—</dd></div>
+      <details class="card dev-card details-card">
+        <summary>
+          <h2>Details</h2>
+          <span class="summary-note">Power, network and sensors</span>
+        </summary>
+        <div class="details-body">
+          <dl class="rows facts-lite" id="device-facts">
+            <div><dt>Temperature</dt><dd id="dev-temp">-</dd></div>
+            <div><dt>Photos</dt><dd id="dev-photos">-</dd></div>
+            <div><dt>Recordings</dt><dd id="dev-recordings">-</dd></div>
+            <div><dt>Permissions</dt><dd id="dev-perms">-</dd></div>
+            <div><dt>Network</dt><dd id="dev-network-detail">-</dd></div>
+            <div><dt>Address</dt><dd id="dev-address">-</dd></div>
+            <div><dt>Bluetooth</dt><dd id="dev-bluetooth">-</dd></div>
+            <div><dt>Airplane mode</dt><dd id="dev-airplane">-</dd></div>
           </dl>
-        </section>
-
-        <section class="card">
-          <div class="card-head"><div><h2>Sensors</h2><p class="card-sub">One reading per sensor, refreshed while this page is open.</p></div></div>
-          <div class="table-wrap">
-            <table class="table" id="sensor-table">
-              <thead><tr><th>Sensor</th><th class="right">Values</th></tr></thead>
-              <tbody><tr><td colspan="2" class="empty">Not read yet.</td></tr></tbody>
-            </table>
+          <div class="details-sensors">
+            <div class="sub-head">Sensors</div>
+            <div class="table-wrap">
+              <table class="table compact" id="sensor-table">
+                <thead><tr><th>Sensor</th><th class="right">Values</th></tr></thead>
+                <tbody><tr><td colspan="2" class="empty">Not read yet.</td></tr></tbody>
+              </table>
+            </div>
           </div>
-        </section>
-      </div>
-
-      <section class="card">
-        <div class="card-head">
-          <div><h2>Photos</h2><p class="card-sub">Stills captured at the current preview size, kept in the app's private storage.</p></div>
-          <span class="muted" id="photo-count"></span>
         </div>
-        <div class="gallery" id="photo-grid"><p class="empty">No photos yet.</p></div>
-      </section>
+      </details>
     </section>
 
     <!-- Logs ------------------------------------------------------------ -->
@@ -498,12 +551,12 @@
         <section class="card">
           <div class="card-head"><div><h2>Storage</h2><p class="card-sub">SQLite, bounded by retention rather than by luck.</p></div></div>
           <dl class="facts" id="storage-facts">
-            <div><dt>Database</dt><dd id="db-path">—</dd></div>
-            <div><dt>Size</dt><dd id="db-size">—</dd></div>
-            <div><dt>Samples</dt><dd id="db-samples">—</dd></div>
-            <div><dt>Raw retention</dt><dd id="db-retention">—</dd></div>
-            <div><dt>Sample interval</dt><dd id="db-interval">—</dd></div>
-            <div><dt>Session lifetime</dt><dd id="db-session">—</dd></div>
+            <div><dt>Database</dt><dd id="db-path">-</dd></div>
+            <div><dt>Size</dt><dd id="db-size">-</dd></div>
+            <div><dt>Samples</dt><dd id="db-samples">-</dd></div>
+            <div><dt>Raw retention</dt><dd id="db-retention">-</dd></div>
+            <div><dt>Sample interval</dt><dd id="db-interval">-</dd></div>
+            <div><dt>Session lifetime</dt><dd id="db-session">-</dd></div>
           </dl>
           <p class="footnote">Events and audit rows are kept for 30 days.</p>
         </section>
@@ -517,12 +570,12 @@
         <section class="card">
           <div class="card-head"><div><h2>Build</h2><p class="card-sub">What is running on the phone.</p></div></div>
           <dl class="facts" id="build-facts">
-            <div><dt>Device</dt><dd id="build-device">—</dd></div>
-            <div><dt>Android</dt><dd id="build-android">—</dd></div>
-            <div><dt>Kernel</dt><dd id="build-kernel">—</dd></div>
-            <div><dt>Python</dt><dd id="build-python">—</dd></div>
-            <div><dt>nginx</dt><dd id="build-nginx">—</dd></div>
-            <div><dt>cloudflared</dt><dd id="build-cloudflared">—</dd></div>
+            <div><dt>Device</dt><dd id="build-device">-</dd></div>
+            <div><dt>Android</dt><dd id="build-android">-</dd></div>
+            <div><dt>Kernel</dt><dd id="build-kernel">-</dd></div>
+            <div><dt>Python</dt><dd id="build-python">-</dd></div>
+            <div><dt>nginx</dt><dd id="build-nginx">-</dd></div>
+            <div><dt>cloudflared</dt><dd id="build-cloudflared">-</dd></div>
           </dl>
           <div class="btn-row"><a class="btn" href="/logout">Sign out</a></div>
         </section>
@@ -531,14 +584,14 @@
       <section class="card">
         <div class="card-head"><div><h2>Remote telemetry</h2><p class="card-sub">Axiom export runs alongside the local log files and SQLite; it never replaces them.</p></div></div>
         <dl class="facts" id="telemetry-facts">
-          <div><dt>State</dt><dd id="telemetry-state">—</dd></div>
-          <div><dt>Dataset</dt><dd id="telemetry-dataset">—</dd></div>
-          <div><dt>Exported</dt><dd id="telemetry-exported">—</dd></div>
-          <div><dt>Queued</dt><dd id="telemetry-queued">—</dd></div>
-          <div><dt>Spool</dt><dd id="telemetry-spool">—</dd></div>
-          <div><dt>Retention</dt><dd id="telemetry-retention">—</dd></div>
-          <div><dt>Last success</dt><dd id="telemetry-last-success">—</dd></div>
-          <div><dt>Last error</dt><dd id="telemetry-last-error">—</dd></div>
+          <div><dt>State</dt><dd id="telemetry-state">-</dd></div>
+          <div><dt>Dataset</dt><dd id="telemetry-dataset">-</dd></div>
+          <div><dt>Exported</dt><dd id="telemetry-exported">-</dd></div>
+          <div><dt>Queued</dt><dd id="telemetry-queued">-</dd></div>
+          <div><dt>Spool</dt><dd id="telemetry-spool">-</dd></div>
+          <div><dt>Retention</dt><dd id="telemetry-retention">-</dd></div>
+          <div><dt>Last success</dt><dd id="telemetry-last-success">-</dd></div>
+          <div><dt>Last error</dt><dd id="telemetry-last-error">-</dd></div>
         </dl>
         <p class="form-note" id="telemetry-note">Remote export is not configured. Run serverctl telemetry-setup on the phone.</p>
       </section>
@@ -576,6 +629,6 @@
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="/vendor/xterm.js" defer></script>
 <script src="/vendor/addon-fit.js" defer></script>
-<script src="console.js?v=17" defer></script>
+<script src="console.js?v=19" defer></script>
 </body>
 </html>

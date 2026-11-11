@@ -24,7 +24,10 @@ test('navigation preserves the terminal, filters, drafts and scroll positions', 
       const url = new URL(route.request().url());
       const reply = data => route.fulfill({ json: data });
       if (url.pathname.startsWith('/api/')) {
-        calls.push({ path: url.pathname, body: route.request().postDataJSON() });
+        // The media upload posts raw bytes, so JSON parsing has to be optional.
+        let body = null;
+        try { body = route.request().postDataJSON(); } catch { body = null; }
+        calls.push({ path: url.pathname, body });
         if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
         if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
         if (url.pathname === '/api/events') { return reply({ audits: [] }); }
@@ -110,7 +113,10 @@ test('reload reattaches to open shells and extra shells get their own tab', asyn
       const url = new URL(route.request().url());
       const reply = data => route.fulfill({ json: data });
       if (url.pathname.startsWith('/api/')) {
-        calls.push({ path: url.pathname, body: route.request().postDataJSON() });
+        // The media upload posts raw bytes, so JSON parsing has to be optional.
+        let body = null;
+        try { body = route.request().postDataJSON(); } catch { body = null; }
+        calls.push({ path: url.pathname, body });
         if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
         if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
         if (url.pathname === '/api/events') { return reply({ audits: [] }); }
@@ -227,7 +233,10 @@ test('device view drives the app through the proxy', async () => {
       const url = new URL(route.request().url());
       const reply = data => route.fulfill({ json: data });
       if (url.pathname.startsWith('/api/')) {
-        calls.push({ path: url.pathname, body: route.request().postDataJSON() });
+        // The media upload posts raw bytes, so JSON parsing has to be optional.
+        let body = null;
+        try { body = route.request().postDataJSON(); } catch { body = null; }
+        calls.push({ path: url.pathname, body });
         if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
         if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
         if (url.pathname === '/api/events') { return reply({ audits: [] }); }
@@ -267,6 +276,9 @@ test('device view drives the app through the proxy', async () => {
         if (url.pathname === '/api/device/media') {
           return reply({ files: [{ file: 'tone.wav', bytes: 32044, modified: 1700000000000 }] });
         }
+        if (url.pathname === '/api/device/media/upload') {
+          return reply({ ok: true, file: 'tone_two.wav' });
+        }
         if (url.pathname === '/api/device/videos') {
           return reply({ files: [{ file: 'vid-1.mp4', bytes: 1048576, modified: 1700000000000 }] });
         }
@@ -290,8 +302,15 @@ test('device view drives the app through the proxy', async () => {
     await page.locator('#view-device').waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.querySelector('#device-banner-text').textContent === 'Control app running');
     assert.match(await page.locator('#device-banner-detail').textContent(), /camera idle/);
-    assert.equal(await page.locator('#dev-battery').textContent(), '74% · 4100 mV');
-    assert.match(await page.locator('#dev-network').textContent(), /WiFi · validated · home-wifi · 72\/18 Mbps · WiFi on/);
+    // The tiles carry the glanceable values; the long forms live under Details.
+    assert.equal(await page.locator('#dev-battery').textContent(), '74%');
+    assert.equal(await page.locator('#dev-battery-note').textContent(), 'on battery · 4100 mV');
+    assert.equal(await page.locator('#dev-network').textContent(), 'Wi-Fi');
+    assert.equal(await page.locator('#dev-network-note').textContent(), 'home-wifi · 72/18 Mbps');
+    assert.match(await page.locator('#dev-network-detail').textContent(), /Wi-Fi · validated · home-wifi · 72\/18 Mbps · Wi-Fi on/);
+    assert.equal(await page.locator('#dev-free').textContent(), '5.0 GB');
+    assert.equal(await page.locator('#dev-free-note').textContent(), 'free of 23.0 GB');
+    assert.equal(await page.locator('#dev-uptime').textContent(), '2m 0s');
     assert.equal(await page.locator('#dev-address').textContent(), '192.168.0.74');
     assert.equal(await page.locator('#dev-bluetooth').textContent(), 'off');
     assert.equal(await page.locator('#dev-airplane').textContent(), 'off');
@@ -299,10 +318,22 @@ test('device view drives the app through the proxy', async () => {
     assert.equal(await page.locator('#sensor-table tbody tr').count(), 1);
     assert.match(await page.locator('#sensor-table tbody').textContent(), /0.1, 0.2, 9.8/);
     assert.equal(await page.locator('#photo-grid figure').count(), 1);
-    assert.equal(await page.locator('#recordings-table tbody tr').count(), 1);
-    assert.equal(await page.locator('#media-table tbody tr').count(), 1);
+    assert.equal(await page.locator('#recordings-list .file-row').count(), 1);
+    assert.equal(await page.locator('#media-list .file-row').count(), 1);
     assert.equal(await page.locator('#volume-sliders .slider-row').count(), 2);
-    assert.equal(await page.locator('#videos-table tbody tr').count(), 1);
+    assert.equal(await page.locator('#videos-list .file-row').count(), 1);
+    // A paired phone shows no pairing strip, and a stopped preview must not
+    // paint the img alt text over the placeholder.
+    assert.equal(await page.locator('#device-pair-form').isVisible(), false);
+    assert.equal(await page.locator('#cam-preview').isVisible(), false);
+    // Recording reopens the sensor on the phone, so the preview is not a
+    // precondition for the button.
+    assert.equal(await page.locator('#video-toggle').isEnabled(), true);
+    // Reference data starts collapsed and opens on request.
+    assert.equal(await page.locator('.details-card').evaluate(node => node.open), false);
+    await page.locator('.details-card > summary').click();
+    assert.equal(await page.locator('.details-card').evaluate(node => node.open), true);
+    await page.locator('.details-card > summary').click();
     // The audit removed duplicated controls rather than leaving two of each.
     assert.equal(await page.locator('#cam-stop').count(), 0);
     assert.equal(await page.locator('#media-pause').count(), 0);
@@ -322,7 +353,9 @@ test('device view drives the app through the proxy', async () => {
     await page.waitForTimeout(400);
 
     // Preview uses the stream endpoint and starts/stops with navigation.
+    assert.equal(await page.locator('#cam-frame').getAttribute('data-live'), 'false');
     await page.locator('#cam-toggle').click();
+    assert.equal(await page.locator('#cam-frame').getAttribute('data-live'), 'true');
     const source = await page.locator('#cam-preview').getAttribute('src');
     assert.match(source, /^\/api\/device\/camera\/stream\?camera=0&fps=4/);
 
@@ -339,6 +372,15 @@ test('device view drives the app through the proxy', async () => {
     await page.waitForFunction(() => document.querySelector('#cam-preview').hasAttribute('src') === false);
 
     await page.locator('[data-route="device"]').click();
+    assert.equal(await page.locator('#cam-frame').getAttribute('data-live'), 'false');
+
+    // The native picker is hidden behind a styled label; the chosen name is
+    // reported back in the row instead of in a light-mode OS chip.
+    assert.equal(await page.locator('#media-file-name').textContent(), 'No file chosen');
+    await page.locator('#media-file').setInputFiles({ name: 'tone two.wav', mimeType: 'audio/wav', buffer: Buffer.from('RIFF') });
+    assert.equal(await page.locator('#media-file-name').textContent(), 'tone two.wav');
+    await page.waitForFunction(() => /Uploaded/.test(document.querySelector('#media-note').textContent));
+    assert.ok(calls.some(call => call.path === '/api/device/media/upload'));
     await page.locator('#cam-snapshot').click();
     await page.locator('#mic-record').click();
     await page.waitForFunction(() => document.querySelector('#mic-record').textContent === 'Stop recording');
@@ -357,6 +399,38 @@ test('device view drives the app through the proxy', async () => {
     assert.ok(stop.length >= 1);
     const snapshot = calls.filter(call => call.body && call.body.action === 'snapshot');
     assert.equal(snapshot[0].body.payload.camera, '0');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the mobile drawer takes focus and hands it back', async () => {
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('http://console.test/**', async route => {
+      const url = new URL(route.request().url());
+      if (url.pathname.startsWith('/api/')) {
+        if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
+        return route.fulfill({ json: {} });
+      }
+      const file = url.pathname === '/console' ? 'console.html' : url.pathname.slice(1);
+      const body = await readFile(path.join(__dirname, 'site', file));
+      return route.fulfill({ body, contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
+    await page.goto('http://console.test/console#/device');
+    await page.locator('#view-device').waitFor({ state: 'visible' });
+    // Without a focus move the next Tab lands on the page behind the scrim.
+    await page.locator('#menu').click();
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.route), 'overview');
+    assert.equal(await page.locator('#scrim').isVisible(), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'menu');
+    assert.equal(await page.locator('#scrim').isVisible(), false);
+    assert.equal(await page.locator('#menu').getAttribute('aria-expanded'), 'false');
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
