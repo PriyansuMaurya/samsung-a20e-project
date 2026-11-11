@@ -169,7 +169,7 @@ All events are NDJSON objects with `_time` (UTC, ISO 8601), `event`, `source`
 
 1. In Axiom create a dataset named `galaxy-server` and an **API token** with
    ingest permission for it. Add `datasets:write` too if this token will manage
-   retention.
+   the dataset (create it, or set retention).
 2. On the phone:
 
 ```sh
@@ -177,10 +177,21 @@ All events are NDJSON objects with `_time` (UTC, ISO 8601), `event`, `source`
 # hidden prompt for the token; dataset, endpoint and retention can be passed
 # ~/galaxy-server/serverctl telemetry-setup --dataset galaxy-server --retention-days 30
 
+~/galaxy-server/serverctl telemetry-doctor --apply
 ~/galaxy-server/serverctl telemetry-test
 ~/galaxy-server/serverctl telemetry-status
-~/galaxy-server/serverctl restart
 ```
+
+The doctor is the first thing to run when ingest fails. Axiom's edge answers
+`404 dataset not found` both for a dataset that does not exist and for a request
+sent to the wrong region, so the command posts a probe event to every edge
+region and reports each answer (`204` accepted, `404 dataset not found`, or
+`401`/`403` for a token that cannot use that dataset). `--apply` writes the
+accepting endpoint into `run/axiom.json`; without it the endpoint is only
+reported. `--create` also attempts `POST https://api.axiom.co/v2/datasets`,
+which answers `403` for an ingest-only token: such a token can never create a
+dataset, so the dataset must be made in the Axiom UI instead. The command never
+prints the token.
 
 3. For automation, use `telemetry-setup --token-file /path/to/token` where the
    file is mode 0600. `--token` also works but warns because it lands in shell

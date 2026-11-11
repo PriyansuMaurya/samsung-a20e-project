@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -329,6 +330,70 @@ class TelemetryTest(unittest.TestCase):
         self.assertEqual(self.client.dataset_retention(), 30)
         self.assertEqual(self.axiom.requests[-1]['auth'],
                          'Bearer xaat-management-token')
+
+    def _managed(self):
+        original = telemetry.MANAGE_ENDPOINT
+        telemetry.MANAGE_ENDPOINT = self.axiom.endpoint
+        self.addCleanup(setattr, telemetry, 'MANAGE_ENDPOINT', original)
+
+    def test_doctor_finds_the_region_that_accepts_ingest(self):
+        self._managed()
+        self.client = make_client(self.temp.name, 'https://us-east-1.aws.edge.axiom.co')
+        self.axiom.queue(200, {'retentionDays': 30})
+        report = self.client.diagnose(hosts={'local': self.axiom.endpoint})
+        self.assertEqual(report['verdict'], 'ready')
+        self.assertEqual(report['recommended_endpoint'], self.axiom.endpoint)
+        self.assertFalse(report['endpoint_updated'])
+        self.assertEqual(report['endpoint'], 'https://us-east-1.aws.edge.axiom.co')
+        self.assertEqual(report['next'], 'serverctl telemetry-doctor --apply')
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX file modes only')
+    def test_doctor_applies_the_working_region_without_loosening_the_config(self):
+        self._managed()
+        self.client = make_client(self.temp.name, 'https://eu-central-1.aws.edge.axiom.co')
+        self.axiom.queue(404, {'code': 404, 'message': 'dataset not found'})
+        report = self.client.diagnose(apply=True, hosts={'local': self.axiom.endpoint})
+        self.assertTrue(report['endpoint_updated'])
+        self.assertEqual(report['endpoint'], self.axiom.endpoint)
+        stored = json.loads(Path(self.client.config_path).read_text())
+        self.assertEqual(stored['endpoint'], self.axiom.endpoint)
+        self.assertEqual(stat.S_IMODE(os.stat(self.client.config_path).st_mode), 0o600)
+
+    def test_doctor_explains_a_missing_dataset(self):
+        self._managed()
+        for _ in range(3):
+            self.axiom.queue(404, {'code': 404, 'message': 'dataset not found'})
+        report = self.client.diagnose(hosts={'us-east-1': self.axiom.endpoint,
+                                             'eu-central-1': self.axiom.endpoint})
+        self.assertEqual(report['verdict'], 'no edge region found the dataset')
+        self.assertIn('create dataset', report['next'])
+        self.assertEqual(report['ingest']['us-east-1']['status'], 404)
+
+    def test_doctor_surfaces_a_token_that_may_not_create_the_dataset(self):
+        self._managed()
+        self.axiom.queue(404, {'code': 404, 'message': 'dataset not found'})
+        self.axiom.queue(403, {'code': 403, 'message': 'forbidden'})
+        for _ in range(2):
+            self.axiom.queue(404, {'code': 404, 'message': 'dataset not found'})
+        report = self.client.diagnose(create=True, hosts={'us-east-1': self.axiom.endpoint,
+                                                          'eu-central-1': self.axiom.endpoint})
+        self.assertEqual(report['dataset_create']['status'], 403)
+        self.assertFalse(report['dataset_create']['ok'])
+        create = [request for request in self.axiom.requests if request['method'] == 'POST'
+                  and request['path'] == '/v2/datasets']
+        self.assertEqual(len(create), 1)
+        self.assertEqual(json.loads(create[0]['body'])['name'], 'galaxy-server')
+
+    def test_doctor_never_prints_the_token(self):
+        self._managed()
+        self.axiom.queue(401, {'code': 401, 'message': 'token not supported'})  # lookup
+        self.axiom.queue(403, {'code': 403, 'message': 'forbidden'})            # create
+        self.axiom.queue(401, {'code': 401, 'message': 'token not supported'})  # ingest
+        self.axiom.queue(401, {'code': 401, 'message': 'token not supported'})  # ingest
+        report = self.client.diagnose(create=True, hosts={'us-east-1': self.axiom.endpoint,
+                                                          'eu-central-1': self.axiom.endpoint})
+        self.assertEqual(report['verdict'], 'token rejected by every edge region')
+        self.assertNotIn(TOKEN, json.dumps(report))
 
 
 class ConfigTest(unittest.TestCase):

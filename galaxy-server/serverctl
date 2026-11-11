@@ -168,6 +168,7 @@ case "${1:-}" in
   telemetry-setup) shift; telemetry setup "$@" ;;
   telemetry-status) telemetry status ;;
   telemetry-test) telemetry test ;;
+  telemetry-doctor) shift; telemetry doctor "$@" ;;
   telemetry-retention) shift; telemetry retention "$@" ;;
   telemetry-backfill)
     # The live service owns the forwarding cursors; a second writer would make
@@ -178,5 +179,5 @@ case "${1:-}" in
     fi
     python "$base/status.py" --telemetry-backfill "${2:-5000}" ;;
   status) curl -fsS http://127.0.0.1:8765/api/health; echo ;;
-  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|tunnel-start|tunnel-stop|tunnel-restart|telemetry-setup|telemetry-status|telemetry-test|telemetry-retention|telemetry-backfill|status}"; exit 2 ;;
+  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|tunnel-start|tunnel-stop|tunnel-restart|telemetry-setup|telemetry-status|telemetry-test|telemetry-doctor|telemetry-retention|telemetry-backfill|status}"; exit 2 ;;
 esac

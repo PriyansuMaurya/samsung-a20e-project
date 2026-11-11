@@ -48,6 +48,11 @@ DEVICE = 'galaxy-a20e'
 SOURCE = 'galaxy-server'
 DEFAULT_ENDPOINT = 'https://us-east-1.aws.edge.axiom.co'
 MANAGE_ENDPOINT = 'https://api.axiom.co'
+# Axiom serves ingest from one edge endpoint per region; a request sent to the
+# wrong region is answered with 404 "dataset not found" even though the dataset
+# exists, so the region has to be discovered rather than assumed.
+EDGE_HOST = 'https://%s.aws.edge.axiom.co'
+EDGE_REGIONS = ('us-east-1', 'eu-central-1')
 DESCRIPTION = 'Galaxy A20e server console telemetry'
 
 # Axiom rejects timestamps more than 24 hours in the future or before 1970.
@@ -839,6 +844,108 @@ class Telemetry:
                               % (status, scrub(text, 200)))
         return {'ok': True, 'previous': current, 'retention_days': days}
 
+    # -------------------------------------------------------------- diagnosis
+
+    def _ingest_probe(self, base, config):
+        """Post one probe event to an ingest base URL and report the answer."""
+        url = '%s/v1/ingest/%s?timestamp-field=_time' % (
+            base.rstrip('/'), urllib.parse.quote(config['dataset'], safe=''))
+        body = (json.dumps({'event': 'galaxy.probe', 'device': DEVICE, '_time': utc_iso()},
+                           separators=(',', ':')) + '\n').encode()
+        request = urllib.request.Request(url, data=body, method='POST', headers={
+            'Authorization': 'Bearer ' + config['token'],
+            'Content-Type': 'application/x-ndjson',
+            'User-Agent': 'galaxy-console-telemetry/1',
+        })
+        try:
+            with urllib.request.urlopen(request, timeout=config['timeout_seconds']) as response:
+                return response.getcode(), scrub(
+                    response.read(512).decode('utf-8', 'replace'), 120)
+        except urllib.error.HTTPError as error:
+            try:
+                detail = error.read(512).decode('utf-8', 'replace')
+            except OSError:
+                detail = ''
+            return error.code, scrub(detail, 120)
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            return None, scrub('%s: %s' % (type(error).__name__, error), 120)
+
+    def create_dataset(self):
+        """Create the dataset. Axiom answers 409 when it already exists."""
+        config = self.config()
+        token, _url = self._manifest(config)
+        if not token:
+            raise ConfigError('no token configured')
+        status, text = self._manage('POST', MANAGE_ENDPOINT + '/v2/datasets', token,
+                                    {'name': config['dataset'],
+                                     'description': DESCRIPTION,
+                                     'retentionDays': config['retention_days']})
+        return {'status': status, 'ok': status in (200, 201, 409),
+                'detail': scrub(text, 160)}
+
+    def diagnose(self, create=False, apply=False, hosts=None):
+        """Find out why ingest fails: token, dataset, or edge region.
+
+        Axiom's edge answers 404 "dataset not found" both when the dataset is
+        missing and when the request went to a region the organisation does not
+        live in, so every region is probed with a real event instead of trusting
+        the configured endpoint.
+        """
+        config = self.config()
+        report = {'dataset': config['dataset'], 'endpoint': config['endpoint'],
+                  'retention_days': config['retention_days'],
+                  'token': bool(config['token']),
+                  'management_token': bool(config.get('manage_token')),
+                  'dataset_lookup': None, 'dataset_create': None, 'ingest': {},
+                  'recommended_endpoint': None, 'endpoint_updated': False,
+                  'verdict': None, 'next': None}
+        if not config['token']:
+            report['verdict'] = 'no token configured'
+            report['next'] = 'serverctl telemetry-setup'
+            return report
+        token, url = self._manifest(config)
+        status, text = self._manage('GET', url, token)
+        report['dataset_lookup'] = {'status': status, 'detail': scrub(text, 160)}
+        if create and status != 200:
+            report['dataset_create'] = self.create_dataset()
+
+        hosts = hosts or {region: EDGE_HOST % region for region in EDGE_REGIONS}
+        for region, base in hosts.items():
+            status, detail = self._ingest_probe(base, config)
+            report['ingest'][region] = {'status': status, 'detail': detail}
+        working = [region for region, result in report['ingest'].items()
+                   if result['status'] and 200 <= result['status'] < 300]
+        rejected = [region for region, result in report['ingest'].items()
+                    if result['status'] in (401, 403)]
+
+        if working:
+            best = working[0]
+            report['recommended_endpoint'] = hosts[best]
+            if apply and config['endpoint'].rstrip('/') != hosts[best].rstrip('/'):
+                config['endpoint'] = hosts[best].rstrip('/')
+                save_config(self.config_path, config)
+                self._config_cache = None
+                self._config_checked = 0
+                report['endpoint'] = config['endpoint']
+                report['endpoint_updated'] = True
+            report['verdict'] = 'ready'
+            report['next'] = ('serverctl telemetry-doctor --apply' if not report['endpoint_updated']
+                              and report['recommended_endpoint'].rstrip('/')
+                              != config['endpoint'].rstrip('/') else 'serverctl telemetry-test')
+        elif len(rejected) == len(report['ingest']):
+            report['verdict'] = 'token rejected by every edge region'
+            report['next'] = ('create an Axiom API token with ingest permission for '
+                              'dataset %r, then serverctl telemetry-setup' % config['dataset'])
+        else:
+            report['verdict'] = 'no edge region found the dataset'
+            if report['dataset_lookup']['status'] == 200:
+                report['verdict'] = 'dataset exists but ingest is refused'
+            report['next'] = ('create dataset %r in Axiom (Settings > Datasets > '
+                              'New dataset) and allow it on the API token, or run '
+                              'serverctl telemetry-doctor --create with a token that '
+                              'may manage datasets' % config['dataset'])
+        return report
+
     # ----------------------------------------------------------------- status
 
     def status(self):
@@ -949,6 +1056,10 @@ def main(argv=None):
     sub.add_parser('status', help='show export health without secrets')
     sub.add_parser('test', help='send one event and flush')
 
+    doctor = sub.add_parser('doctor', help='find why ingest fails: token, dataset or region')
+    doctor.add_argument('--create', action='store_true', help='create the dataset if the token may')
+    doctor.add_argument('--apply', action='store_true', help='write the working edge endpoint')
+
     retention = sub.add_parser('retention', help='read or set dataset retention')
     retention.add_argument('--days', type=int, default=None)
     retention.add_argument('--apply', action='store_true')
@@ -977,6 +1088,14 @@ def main(argv=None):
         result = client.send_test()
         print(json.dumps(result, indent=2))
         return 0 if result.get('ok') else 1
+    if args.command == 'doctor':
+        try:
+            result = client.diagnose(create=args.create, apply=args.apply)
+        except (ConfigError, OSError, ValueError) as error:
+            print('error: %s' % error, file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0 if result.get('verdict') == 'ready' else 1
     if args.command == 'retention':
         try:
             if not args.apply:
