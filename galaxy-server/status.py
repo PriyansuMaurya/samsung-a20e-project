@@ -37,7 +37,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import telemetry
 
@@ -50,6 +50,7 @@ PRIV_DIR = os.path.join(BASE, 'priv')
 DB_PATH = os.path.join(RUN_DIR, 'galaxy.db')
 SETTINGS_PATH = os.path.join(RUN_DIR, 'settings.json')
 DEVICE_PATH = os.path.join(RUN_DIR, 'device.json')
+MUSIC_PATH = os.path.join(RUN_DIR, 'jamendo.json')
 PASSFILE = os.path.join(RUN_DIR, 'htpasswd')
 TERMINAL_PASSFILE = os.path.join(RUN_DIR, 'terminal.passwd')
 SERVERCTL = os.path.join(BASE, 'serverctl')
@@ -370,6 +371,124 @@ def device_path(base, query):
         if value:
             pairs.append(quote(key, safe='') + '=' + quote(value, safe=''))
     return base + ('?' + '&'.join(pairs) if pairs else '')
+
+
+# --------------------------------------------------------------------------- #
+# Jamendo music search (api.jamendo.com)
+# --------------------------------------------------------------------------- #
+
+# The client id is a free portal credential, not a user secret, but it still
+# stays on the phone so the public console assets never carry it. The search
+# runs here because the console's CSP allows no third-party connections.
+JAMENDO_API = 'https://api.jamendo.com/v3.0/tracks/'
+MUSIC_LIMIT = 10
+MUSIC_CATEGORY_RE = re.compile(r'[^a-z]')
+
+
+def read_music():
+    try:
+        with open(MUSIC_PATH, encoding='utf-8') as handle:
+            stored = json.load(handle)
+    except (OSError, ValueError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    return {'client_id': str(stored.get('client_id') or '').strip()}
+
+
+def set_music_client(client_id):
+    client_id = (client_id or '').strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', client_id):
+        raise ValueError('A Jamendo client id is 8 to 64 letters, digits, - or _')
+    os.makedirs(RUN_DIR, exist_ok=True)
+    temp = MUSIC_PATH + '.tmp'
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump({'client_id': client_id}, handle)
+        os.replace(temp, MUSIC_PATH)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def music_tracks(search='', category='', limit=MUSIC_LIMIT):
+    """One Jamendo tracks query, reduced to what the player renders."""
+    config = read_music()
+    if not config['client_id']:
+        return {'configured': False, 'tracks': [],
+                'error': 'No Jamendo client id set. Run serverctl jamendo-key on the phone.'}
+    params = {
+        'client_id': config['client_id'],
+        'format': 'json',
+        'limit': str(max(1, min(int(limit), MUSIC_LIMIT))),
+        # Singles have no album image of their own; ask for both kinds so the
+        # search is not limited to album tracks.
+        'type': 'single albumtrack',
+        'imagesize': '200',
+    }
+    search = (search or '').strip()[:80]
+    category = MUSIC_CATEGORY_RE.sub('', (category or '').lower())[:24]
+    if search:
+        params['namesearch'] = search
+    if category:
+        params['fuzzytags'] = category
+    if not search:
+        # With no name match there is nothing to rank by relevance, so show
+        # the catalogue's most popular tracks instead.
+        params['order'] = 'popularity_total'
+    request = urllib.request.Request(
+        JAMENDO_API + '?' + urlencode(params),
+        headers={'User-Agent': 'galaxy-console/1.0'})
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            raw = response.read(2 * 1024 * 1024)
+    except urllib.error.HTTPError as error:
+        message = _jamendo_error(error.read(8192)) or ('HTTP %d' % error.code)
+        return {'configured': True, 'tracks': [], 'error': message}
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        reason = getattr(error, 'reason', None) or error
+        return {'configured': True, 'tracks': [],
+                'error': 'Jamendo is unreachable: %s' % reason}
+    try:
+        payload = json.loads(raw.decode('utf-8', 'replace'))
+    except ValueError:
+        return {'configured': True, 'tracks': [],
+                'error': 'Jamendo returned an unreadable response'}
+    if not isinstance(payload, dict):
+        return {'configured': True, 'tracks': [],
+                'error': 'Jamendo returned an unreadable response'}
+    header = payload.get('headers')
+    if isinstance(header, dict) and header.get('status') not in (None, 'success'):
+        return {'configured': True, 'tracks': [],
+                'error': str(header.get('error_message') or 'Jamendo rejected the query')}
+    tracks = []
+    for row in payload.get('results') or []:
+        if not isinstance(row, dict):
+            continue
+        audio = str(row.get('audio') or '')
+        if not audio.startswith('https://'):
+            # Without a playable stream the card would be a dead control.
+            continue
+        image = str(row.get('image') or '')
+        tracks.append({
+            'id': str(row.get('id') or ''),
+            'name': str(row.get('name') or 'Untitled'),
+            'artist': str(row.get('artist_name') or 'Unknown artist'),
+            'album': str(row.get('album_name') or ''),
+            'duration': int(row.get('duration') or 0),
+            'image': image if image.startswith('https://') else '',
+            'audio': audio,
+        })
+    return {'configured': True, 'tracks': tracks, 'count': len(tracks)}
+
+
+def _jamendo_error(raw):
+    try:
+        header = json.loads(raw.decode('utf-8', 'replace')).get('headers') or {}
+    except (ValueError, AttributeError, UnicodeDecodeError):
+        return ''
+    return str(header.get('error_message') or '')
 
 
 # --------------------------------------------------------------------------- #
@@ -1457,7 +1576,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             user = session_user(self)[0]
             self._html(200, body.replace('{{USER}}', user),
-                       {'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; "
+                       # Cover art and audio come from Jamendo's own hosts, so
+                       # they are the only third parties allowed. Search and
+                       # every API call still go through this server.
+                       {'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https://*.jamendo.com; "
+                                                   "media-src 'self' https://*.jamendo.com; "
                                                    "style-src 'self' 'unsafe-inline'; "
                                                    "script-src 'self' 'unsafe-inline'; "
                                                    "connect-src 'self'; frame-ancestors 'none'"})
@@ -1654,6 +1777,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                      if hmac.compare_digest(terminal['owner'], owner)),
                     key=lambda item: item['created'])
             self._json(200, {'terminals': terminals})
+            return
+        if path == '/api/music/search':
+            q = (query.get('q') or [''])[0].strip()
+            category = (query.get('category') or [''])[0]
+            result = music_tracks(q, category)
+            if result.get('error') and result.get('configured'):
+                self._json(502, result)
+                return
+            self._json(200, result)
             return
         if path == '/api/status':
             try:
@@ -2134,6 +2266,15 @@ def main():
         except ValueError as error:
             raise SystemExit(str(error))
         print('Terminal password set')
+        return
+    if len(sys.argv) == 2 and sys.argv[1] == '--set-jamendo-key':
+        import getpass
+        client_id = getpass.getpass('Jamendo client id (devportal.jamendo.com): ')
+        try:
+            set_music_client(client_id)
+        except ValueError as error:
+            raise SystemExit(str(error))
+        print('Jamendo client id saved to %s' % MUSIC_PATH)
         return
     if len(sys.argv) >= 2 and sys.argv[1] == '--telemetry-backfill':
         try:

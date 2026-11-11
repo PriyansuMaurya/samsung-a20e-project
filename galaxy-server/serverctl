@@ -192,6 +192,7 @@ case "${1:-}" in
   stop) stop ;;
   passwd) passwd ;;
   terminal-passwd) python "$base/status.py" --set-terminal-password ;;
+  jamendo-key) python "$base/status.py" --set-jamendo-key ;;
   tunnel-start) tunnel_start ;;
   tunnel-stop) tunnel_stop ;;
   tunnel-restart) tunnel_restart ;;
@@ -211,5 +212,5 @@ case "${1:-}" in
     fi
     python "$base/status.py" --telemetry-backfill "${2:-5000}" ;;
   status) curl -fsS http://127.0.0.1:8765/api/health; echo ;;
-  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|tunnel-start|tunnel-stop|tunnel-restart|telemetry-setup|telemetry-status|telemetry-test|telemetry-doctor|telemetry-retention|telemetry-backfill|status}"; exit 2 ;;
+  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|jamendo-key|tunnel-start|tunnel-stop|tunnel-restart|telemetry-setup|telemetry-status|telemetry-test|telemetry-doctor|telemetry-retention|telemetry-backfill|status}"; exit 2 ;;
 esac

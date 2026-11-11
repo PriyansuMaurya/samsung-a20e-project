@@ -436,3 +436,92 @@ test('the mobile drawer takes focus and hands it back', async () => {
     await browser.close();
   }
 });
+
+test('music player searches, filters and reports a dead stream', async () => {
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const calls = [];
+    let configured = true;
+    const tracks = [
+      { id: '1', name: 'Rain On The Roof', artist: 'Aria Fields', album: 'Rain', duration: 201,
+        image: 'https://usercontent.jamendo.com?type=album&id=1&width=200',
+        audio: 'https://prod-1.storage.jamendo.com/?trackid=1&format=mp31' },
+      { id: '2', name: 'Late Night Drive', artist: 'Kite Club', album: '', duration: 149,
+        image: '', audio: 'https://prod-1.storage.jamendo.com/?trackid=2&format=mp31' }
+    ];
+    await page.route('http://console.test/**', async route => {
+      const url = new URL(route.request().url());
+      const reply = data => route.fulfill({ json: data });
+      if (url.pathname.startsWith('/api/')) {
+        calls.push({ path: url.pathname, search: url.search });
+        if (url.pathname === '/api/music/search') {
+          if (!configured) {
+            return reply({ configured: false, tracks: [],
+              error: 'No Jamendo client id set. Run serverctl jamendo-key on the phone.' });
+          }
+          return reply({ configured: true, tracks, count: tracks.length });
+        }
+        if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
+        if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
+        if (url.pathname === '/api/events') { return reply({ audits: [] }); }
+        if (url.pathname === '/api/timeline') { return reply({ points: [], events: [] }); }
+        return reply({});
+      }
+      const file = url.pathname === '/console' ? 'console.html' : url.pathname.slice(1);
+      const body = await readFile(path.join(__dirname, 'site', file));
+      return route.fulfill({ body, contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
+
+    await page.goto('http://console.test/console#/music');
+    await page.locator('#view-music').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelectorAll('#music-tracks .track').length === 2);
+    assert.equal(calls.filter(call => call.path === '/api/music/search')[0].search, '');
+    assert.equal(await page.locator('.track-title').first().textContent(), 'Rain On The Roof');
+    assert.equal(await page.locator('.track-artist').first().textContent(), 'Aria Fields');
+    assert.equal(await page.locator('.track-art').first().getAttribute('src'), tracks[0].image);
+    assert.equal(await page.locator('.track audio').first().getAttribute('src'), tracks[0].audio);
+    assert.equal(await page.locator('.track-art.placeholder').count(), 1);
+    assert.equal(await page.locator('#music-count').textContent(), '2 tracks');
+
+    await page.locator('#music-query').fill('rain');
+    const searched = page.waitForResponse(response => response.url().includes('/api/music/search?q=rain'));
+    await page.locator('#music-form button[type="submit"]').click();
+    await searched;
+    await page.waitForFunction(() => document.querySelectorAll('#music-tracks .track').length === 2);
+
+    const filtered = page.waitForResponse(response => response.url().includes('category=jazz'));
+    await page.locator('#music-categories button[data-category="jazz"]').click();
+    await filtered;
+    assert.equal(await page.locator('#music-categories button[data-category="jazz"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('#music-categories button[data-category=""]').getAttribute('aria-pressed'), 'false');
+
+    // A stream that fails after the search answers is reported on its card.
+    await page.evaluate(() => document.querySelector('.track audio').dispatchEvent(new Event('error')));
+    assert.equal(await page.locator('.track').first().getAttribute('data-state'), 'error');
+    assert.match(await page.locator('.track-error').first().textContent(), /Stream unavailable/);
+    assert.equal(await page.locator('.track-error').first().isVisible(), true);
+
+    // Navigation keeps the loaded list and never restarts the stream.
+    const before = calls.filter(call => call.path === '/api/music/search').length;
+    await page.locator('[data-route="overview"]').click();
+    await page.locator('#view-overview').waitFor({ state: 'visible' });
+    await page.locator('[data-route="music"]').click();
+    await page.locator('#view-music').waitFor({ state: 'visible' });
+    assert.equal(calls.filter(call => call.path === '/api/music/search').length, before);
+    assert.equal(await page.locator('#music-tracks .track').count(), 2);
+
+    configured = false;
+    await page.locator('#music-query').fill('nothing');
+    const unconfigured = page.waitForResponse(response => response.url().includes('q=nothing'));
+    await page.locator('#music-form button[type="submit"]').click();
+    await unconfigured;
+    await page.waitForFunction(() => document.querySelector('#music-status').textContent.includes('jamendo-key'));
+    assert.equal(await page.locator('#music-tracks .track').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

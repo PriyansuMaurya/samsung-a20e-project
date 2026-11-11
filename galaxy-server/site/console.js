@@ -13,6 +13,7 @@
     services: ['Services', 'Processes, restart counts and controls.'],
     networking: ['Networking', 'Hostnames, tunnel connector and access rules.'],
     device: ['Device', 'Cameras, microphone, accessories and media on the phone.'],
+    music: ['Music', 'Search and stream Creative Commons tracks from Jamendo.'],
     logs: ['Logs', 'Search the server log files.'],
     terminal: ['Terminal', 'Run commands as the Termux user.'],
     settings: ['Settings', 'Probe configuration, storage and audit trail.']
@@ -150,6 +151,9 @@
     if (route === 'logs') { loadLogs(); }
     if (route === 'settings') { loadSettings(); loadEvents(); loadTelemetry(); }
     if (route === 'services' || route === 'networking') { loadEvents(); }
+    // The player keeps its tracks (and any audio playing) after the first
+    // load, so returning to this view does not restart the stream.
+    if (route === 'music' && !music.loaded) { loadMusic(); }
     if (route === 'device') {
       loadDevice();
     } else {
@@ -1877,6 +1881,117 @@
     });
   }
 
+  // ------------------------------------------------------------------ music
+  // Only the search request goes through this server. Track audio is fetched
+  // by the browser straight from Jamendo's CDN, so the phone proxies nothing.
+  var music = { loaded: false, busy: false, query: '', category: '' };
+
+  function musicStatus(text, kind) {
+    var node = $('#music-status');
+    node.textContent = text;
+    node.hidden = !text;
+    if (kind) { node.dataset.state = kind; } else { delete node.dataset.state; }
+  }
+
+  function trackCard(track) {
+    var audio = el('audio', { controls: '', preload: 'none', src: track.audio });
+    var art = track.image
+      ? el('img', { class: 'track-art', src: track.image, alt: 'Cover art for ' + track.name, loading: 'lazy', width: '64', height: '64' })
+      : el('span', { class: 'track-art placeholder', 'aria-hidden': 'true', text: '♪' });
+    var card = el('li', { class: 'track', 'data-track': track.id }, [
+      art,
+      el('div', { class: 'track-body' }, [
+        el('div', { class: 'track-head' }, [
+          el('strong', { class: 'track-title', text: track.name, title: track.name }),
+          el('span', { class: 'track-artist', text: track.artist, title: track.artist })
+        ]),
+        audio,
+        el('p', { class: 'track-error', hidden: '', role: 'alert' })
+      ])
+    ]);
+    // A stream can fail long after the search succeeded: the CDN can refuse a
+    // track or the connection can drop mid-song. Say so on the card instead of
+    // leaving a player that silently does nothing.
+    audio.addEventListener('error', function () {
+      card.dataset.state = 'error';
+      var note = $('.track-error', card);
+      note.textContent = 'Stream unavailable. Jamendo did not return audio for this track.';
+      note.hidden = false;
+      toast('Stream unavailable: ' + track.name, 'error');
+    });
+    audio.addEventListener('playing', function () {
+      card.dataset.state = 'playing';
+      $('.track-error', card).hidden = true;
+    });
+    audio.addEventListener('play', function () {
+      // Ten players in one grid must not overlap.
+      $$('#music-tracks audio').forEach(function (other) {
+        if (other !== audio) { other.pause(); }
+      });
+    });
+    audio.addEventListener('pause', function () {
+      if (card.dataset.state === 'playing') { delete card.dataset.state; }
+    });
+    return card;
+  }
+
+  function renderMusic(data) {
+    var list = $('#music-tracks');
+    list.textContent = '';
+    $('#music-count').textContent = data.count ? data.count + ' tracks' : '';
+    if (data.configured === false) {
+      musicStatus(data.error || 'Jamendo is not configured.', 'error');
+      return;
+    }
+    if (!data.tracks || !data.tracks.length) {
+      musicStatus('No tracks matched. Try another name or category.');
+      return;
+    }
+    musicStatus('');
+    data.tracks.forEach(function (track) { list.appendChild(trackCard(track)); });
+  }
+
+  function loadMusic() {
+    if (music.busy) { return; }
+    music.busy = true;
+    var query = new URLSearchParams();
+    if (music.query) { query.set('q', music.query); }
+    if (music.category) { query.set('category', music.category); }
+    musicStatus('Loading tracks…');
+    $('#music-count').textContent = '';
+    api('/api/music/search' + (query.toString() ? '?' + query : ''))
+      .then(function (data) {
+        music.loaded = true;
+        renderMusic(data);
+      })
+      .catch(function (error) {
+        music.loaded = true;
+        $('#music-tracks').textContent = '';
+        musicStatus(error.message, 'error');
+        toast('Music: ' + error.message, 'error');
+      })
+      .then(function () { music.busy = false; });
+  }
+
+  function wireMusic() {
+    $('#music-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+      music.query = $('#music-query').value.trim();
+      loadMusic();
+    });
+    $('#music-categories').addEventListener('click', function (event) {
+      var button = event.target.closest('button[data-category]');
+      if (!button) { return; }
+      music.category = button.dataset.category;
+      $$('#music-categories button').forEach(function (chip) {
+        var active = chip === button;
+        chip.classList.toggle('on', active);
+        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      loadMusic();
+    });
+  }
+
   // ------------------------------------------------------------------ data
   function loadTimeline(range) {
     return api('/api/timeline?range=' + encodeURIComponent(range)).then(function (data) {
@@ -1924,6 +2039,7 @@
   // ------------------------------------------------------------------- init
   function wire() {
     wireDevice();
+    wireMusic();
     window.addEventListener('pagehide', function () {
       if (deviceState.cameraOn) { stopCamera(true); }
       if (deviceState.listening) { stopListening(); }

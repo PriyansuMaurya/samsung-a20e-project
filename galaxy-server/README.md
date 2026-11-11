@@ -100,7 +100,7 @@ A browser reload reattaches to the shells the page had open, without asking for 
 
 ## Console and control API
 
-`/` is the public landing page. `/console` is the admin console: a signed-in single-page app with eight views — Overview, Metrics, Services, Networking, Device, Logs, Terminal and Settings — reached through `/login` and left with `/logout`. Nginx serves the static landing page from `site/` and proxies `/console`, `/login`, `/logout` and `/api/*` to `status.py` on `127.0.0.1:8765`; nothing else is routed. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` behind the tunnel and expires after 12 hours, and every private endpoint re-checks it server-side, so a missing or expired cookie gets 401 instead of the page.
+`/` is the public landing page. `/console` is the admin console: a signed-in single-page app with nine views — Overview, Metrics, Services, Networking, Device, Music, Logs, Terminal and Settings — reached through `/login` and left with `/logout`. Nginx serves the static landing page from `site/` and proxies `/console`, `/login`, `/logout` and `/api/*` to `status.py` on `127.0.0.1:8765`; nothing else is routed. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` behind the tunnel and expires after 12 hours, and every private endpoint re-checks it server-side, so a missing or expired cookie gets 401 instead of the page.
 
 | Piece | Where |
 |---|---|
@@ -109,7 +109,7 @@ A browser reload reattaches to the shells the page had open, without asking for 
 | Status, charts, logs, actions | `status.py` on `127.0.0.1:8765` |
 | Password | `run/htpasswd`, `{SHA}` format, set with `~/galaxy-server/serverctl passwd` |
 
-Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET /api/telemetry`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`, and the device routes described below (`/api/device/*`). `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
+Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET /api/music/search?q=&category=`, `GET /api/telemetry`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`, and the device routes described below (`/api/device/*`). `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
 
 `status.py` samples every 30 seconds into `run/galaxy.db`: raw samples are kept for 7 days and pruned, and the 24-hour and 7-day views aggregate those rows into 5- and 30-minute buckets in SQL. A bucket with no sample is returned as a gap, never as a zero, so the charts show missing data as missing. Health is computed server-side from memory, storage, battery, service states, tunnel readiness and the HTTPS probe, and returned as `health` plus `alerts`; values older than four sample intervals are marked stale and a component with no reading is reported as not monitored.
 
@@ -135,6 +135,18 @@ The **Device** view drives a small companion app (`android/device-control`) that
 - Actions are allowlisted (`torch`, `vibrate`, `brightness`, `volume`, camera start/stop/snapshot, record start/stop, media play/control/delete, photo/recording delete) and each one is written to the audit log as `device-<action>`.
 
 `DEVICE-CONTROL.md` has the hardware audit, every endpoint, and the Android restrictions behind each omission.
+
+## Music player
+
+The **Music** view searches the free [Jamendo](https://devportal.jamendo.com/) catalogue and plays Creative Commons tracks with a plain HTML5 `<audio>` player. A search box covers track and artist names, and the chips filter by genre (`rock`, `pop`, `electronic`, `hiphop`, `jazz`, `classical`, `lounge`, `world`); with no search the results are ordered by popularity.
+
+Create a free application at [devportal.jamendo.com](https://devportal.jamendo.com/) and store its client id on the phone. The key is asked for without echo and written to `run/jamendo.json` (mode 0600):
+
+```sh
+~/galaxy-server/serverctl jamendo-key
+```
+
+Only the search request passes through `status.py` (`/api/music/search`), which calls `https://api.jamendo.com/v3.0/tracks/` with `namesearch`, `fuzzytags`, `imagesize=200` and `limit=10`, and returns just the fields the player draws — name, artist, album, duration, cover `image` and stream `audio` URL. The client id and Jamendo's large `waveform` payload never reach the browser. Audio and cover art load directly from Jamendo's CDN, so the phone does not relay the stream; the console's `Content-Security-Policy` allows those hosts for `media-src` and `img-src` and still refuses third-party connections. Playback continues while other views are open, only one track plays at a time, and a stream that fails after the search is reported on its own card instead of leaving a dead player.
 
 ## Remote telemetry (Axiom)
 
