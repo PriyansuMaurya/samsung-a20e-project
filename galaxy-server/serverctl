@@ -164,6 +164,28 @@ telemetry() {
   python "$base/telemetry.py" --config "$base/run/axiom.json" "$@"
 }
 
+# One-time bridge, run on the phone: the app's pairing window has to be open.
+# The endpoint is loopback-only, so this cannot be used from the internet.
+device_pair() {
+  curl -fsS --max-time 15 -X POST -H 'Content-Type: application/json' \
+    -d '{}' http://127.0.0.1:8765/api/device/pair-local 2>/dev/null || {
+      echo "could not pair: is the status service running and the app's pairing window open?" >&2
+      return 1
+    }
+  echo
+}
+
+device_status() {
+  port=$(python -c 'import json,os;print(json.load(open(os.path.expanduser("~/galaxy-server/run/device.json")))["port"])' 2>/dev/null || echo 8790)
+  token=$(python -c 'import json,os;print(json.load(open(os.path.expanduser("~/galaxy-server/run/device.json")))["token"])' 2>/dev/null || true)
+  if [ -z "$token" ]; then echo "not paired"; return 1; fi
+  curl -fsS --max-time 5 -H "X-Galaxy-Token: $token" "http://127.0.0.1:$port/health" || {
+    echo "app not answering on 127.0.0.1:$port" >&2
+    return 1
+  }
+  echo
+}
+
 case "${1:-}" in
   start) start ;;
   restart) stop_status; start ;;
@@ -178,6 +200,8 @@ case "${1:-}" in
   telemetry-test) telemetry test ;;
   telemetry-doctor) shift; telemetry doctor "$@" ;;
   telemetry-retention) shift; telemetry retention "$@" ;;
+  device-pair) device_pair ;;
+  device-status) device_status ;;
   telemetry-backfill)
     # The live service owns the forwarding cursors; a second writer would make
     # them skip or repeat lines, so this is a maintenance command only.

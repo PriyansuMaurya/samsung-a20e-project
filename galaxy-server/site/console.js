@@ -1179,7 +1179,7 @@
   var deviceState = {
     summary: null, photos: [], recordings: [], media: [],
     cameraOn: false, torch: false, listening: null, recordStarted: 0,
-    recordTimer: null, brightnessTimer: null
+    recordTimer: null, brightnessTimer: null, camRetry: null
   };
 
   function deviceControl(action, payload) {
@@ -1507,6 +1507,7 @@
   }
 
   function startCamera() {
+    clearTimeout(deviceState.camRetry);
     var id = $('#cam-id').value || '0';
     var size = $('#cam-size').value || '';
     var fps = $('#cam-fps').value || '4';
@@ -1521,6 +1522,7 @@
   }
 
   function stopCamera(silent) {
+    clearTimeout(deviceState.camRetry);
     var image = $('#cam-preview');
     image.hidden = true;
     image.removeAttribute('src');
@@ -1688,6 +1690,15 @@
     });
     $('#cam-fps').addEventListener('change', function () {
       if (deviceState.cameraOn) { startCamera(); }
+    });
+    // A stream lives five minutes by design; over a tunnel it can also drop on
+    // its own. Re-open it while the operator still has the view open.
+    $('#cam-preview').addEventListener('error', function () {
+      if (!deviceState.cameraOn) { return; }
+      clearTimeout(deviceState.camRetry);
+      deviceState.camRetry = setTimeout(function () {
+        if (deviceState.cameraOn) { startCamera(); }
+      }, 3000);
     });
     $('#cam-start').addEventListener('click', startCamera);
     $('#cam-stop').addEventListener('click', function () { stopCamera(false); });

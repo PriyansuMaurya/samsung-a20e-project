@@ -185,6 +185,17 @@ class DeviceProxyTest(unittest.TestCase):
                                    'Content-Type': 'application/octet-stream'})
         self.assertEqual(code, 400)
 
+    def test_local_pairing_needs_loopback_and_no_proxy(self):
+        status.write_device({'token': '', 'port': self.device.server_port})
+        code, payload = self.call('POST', '/api/device/pair-local')
+        self.assertEqual(code, 200)
+        self.assertTrue(payload['paired'])
+        self.assertEqual(len(status.read_device()['token']), 48)
+
+        code, payload = self.call('POST', '/api/device/pair-local',
+                                  headers={'X-Galaxy-Proxy': '1'})
+        self.assertEqual(code, 404)
+
     def test_unpaired_and_device_down_answers(self):
         status.write_device({'token': '', 'port': self.device.server_port})
         code, payload = self.call('GET', '/api/device/battery')

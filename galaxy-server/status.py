@@ -1712,6 +1712,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self._json(404, {'error': 'not found'})
 
+    def _device_pair_local(self):
+        token = ''
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+            if 0 < length <= 2048:
+                data = json.loads(self.rfile.read(length).decode('utf-8'))
+                if isinstance(data, dict):
+                    token = str(data.get('token') or '').strip()
+        except (ValueError, TypeError, UnicodeDecodeError):
+            pass
+        token = token or secrets.token_hex(24)
+        if not 16 <= len(token) <= 128:
+            self._json(400, {'error': 'Pairing token must be 16 to 128 characters'})
+            return
+        config = read_device()
+        try:
+            _status, result = device_call('/pair', {'token': token}, timeout=8)
+        except (OSError, http.client.HTTPException):
+            self._device_unavailable('The control app is not running on the phone')
+            return
+        if result.get('paired') is not True:
+            add_audit('local', 'device-pair', 'failed', str(result.get('error') or 'refused'))
+            self._json(400, {'error': result.get('error')
+                             or 'Open the pairing window in the Galaxy Device app first'})
+            return
+        write_device({'token': token, 'port': config['port']})
+        add_audit('local', 'device-pair', 'ok', 'paired from the phone itself')
+        self._json(200, {'ok': True, 'paired': True})
+
     def _device_pair(self, user):
         data = self._body(2048)
         if data is None:
@@ -1867,6 +1896,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(202, {'status': 'deployment queued'})
             else:
                 self._json(200, {'status': 'ignored'})
+            return
+        if path == '/api/device/pair-local':
+            # Loopback only and never through nginx: this is the bridge the
+            # phone itself uses, so pairing is possible before any session
+            # exists and survives a browser that has never signed in.
+            if (self.client_address[0] not in ('127.0.0.1', '::1')
+                    or self.headers.get('X-Galaxy-Proxy')):
+                self._json(404, {'error': 'not found'})
+                return
+            self._device_pair_local()
             return
         if path.startswith('/api/device/'):
             user = self._private()

@@ -276,7 +276,7 @@
       <form class="card pair-card" id="device-pair-form">
         <div>
           <h2>Pair the phone app</h2>
-          <p class="card-sub">The Galaxy Device app listens on loopback only. Open its pairing window, then pair here: the dashboard creates the token, the app stores it, and the browser never sees it.</p>
+          <p class="card-sub">The Galaxy Device app listens on loopback only. Pair once — here, or with <code>serverctl device-pair</code> on the phone — and it stays paired across reboots and deploys. The dashboard creates the token, the app stores it, and the browser never sees it.</p>
         </div>
         <div class="btn-row">
           <button class="btn primary" type="submit">Pair now</button>
@@ -562,6 +562,6 @@
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="/vendor/xterm.js" defer></script>
 <script src="/vendor/addon-fit.js" defer></script>
-<script src="console.js?v=15" defer></script>
+<script src="console.js?v=16" defer></script>
 </body>
 </html>
