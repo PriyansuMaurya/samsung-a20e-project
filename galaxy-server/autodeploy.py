@@ -13,7 +13,7 @@ import urllib.request
 
 BASE = Path.home() / 'galaxy-server'
 REPO = 'git@github.com:PriyansuMaurya/samsung-a20e-project.git'
-FILES = ('site', 'status.py', 'serverctl', 'supervise.sh', 'autodeploy.py')
+FILES = ('site', 'status.py', 'telemetry.py', 'serverctl', 'supervise.sh', 'autodeploy.py')
 
 
 def run(*args, **kwargs):
@@ -22,6 +22,10 @@ def run(*args, **kwargs):
 
 def copy_release(source):
     for name in FILES:
+        if not (source / name).exists():
+            # A rollback backup taken before this file existed has nothing to
+            # restore; the newly installed copy is inert on the old release.
+            continue
         target = BASE / name
         if name == 'site':
             # Keep the previous assets until the replacement is ready.
@@ -64,13 +68,15 @@ def deploy(revision):
     for name in FILES:
         if not (source / name).exists():
             raise RuntimeError(f'Release missing {name}')
-    compile((source / 'status.py').read_bytes(), 'status.py', 'exec')
-    compile((source / 'autodeploy.py').read_bytes(), 'autodeploy.py', 'exec')
+    for name in ('status.py', 'telemetry.py', 'autodeploy.py'):
+        compile((source / name).read_bytes(), name, 'exec')
     for name in ('serverctl', 'supervise.sh'):
         run('bash', '-n', str(source / name))
     with tempfile.TemporaryDirectory(dir=BASE / 'run', prefix='rollback-') as tmp:
         backup = Path(tmp)
         for name in FILES:
+            if not (BASE / name).exists():
+                continue
             if (BASE / name).is_dir():
                 shutil.copytree(BASE / name, backup / name)
             else:

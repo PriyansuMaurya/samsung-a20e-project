@@ -152,6 +152,10 @@ tunnel_restart() {
   return 1
 }
 
+telemetry() {
+  python "$base/telemetry.py" --config "$base/run/axiom.json" "$@"
+}
+
 case "${1:-}" in
   start) start ;;
   restart) stop_status; start ;;
@@ -161,6 +165,18 @@ case "${1:-}" in
   tunnel-start) tunnel_start ;;
   tunnel-stop) tunnel_stop ;;
   tunnel-restart) tunnel_restart ;;
+  telemetry-setup) shift; telemetry setup "$@" ;;
+  telemetry-status) telemetry status ;;
+  telemetry-test) telemetry test ;;
+  telemetry-retention) shift; telemetry retention "$@" ;;
+  telemetry-backfill)
+    # The live service owns the forwarding cursors; a second writer would make
+    # them skip or repeat lines, so this is a maintenance command only.
+    if [ -s "$base/run/status.pid" ] && kill -0 "$(cat "$base/run/status.pid")" 2>/dev/null; then
+      echo "stop the server first: $0 stop, then $0 telemetry-backfill, then $0 start" >&2
+      exit 1
+    fi
+    python "$base/status.py" --telemetry-backfill "${2:-5000}" ;;
   status) curl -fsS http://127.0.0.1:8765/api/health; echo ;;
-  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|tunnel-start|tunnel-stop|tunnel-restart|status}"; exit 2 ;;
+  *) echo "Usage: $0 {start|restart|stop|passwd|terminal-passwd|tunnel-start|tunnel-stop|tunnel-restart|telemetry-setup|telemetry-status|telemetry-test|telemetry-retention|telemetry-backfill|status}"; exit 2 ;;
 esac

@@ -369,6 +369,21 @@
           <div class="btn-row"><a class="btn" href="/logout">Sign out</a></div>
         </section>
       </div>
+
+      <section class="card">
+        <div class="card-head"><div><h2>Remote telemetry</h2><p class="card-sub">Axiom export runs alongside the local log files and SQLite; it never replaces them.</p></div></div>
+        <dl class="facts" id="telemetry-facts">
+          <div><dt>State</dt><dd id="telemetry-state">—</dd></div>
+          <div><dt>Dataset</dt><dd id="telemetry-dataset">—</dd></div>
+          <div><dt>Exported</dt><dd id="telemetry-exported">—</dd></div>
+          <div><dt>Queued</dt><dd id="telemetry-queued">—</dd></div>
+          <div><dt>Spool</dt><dd id="telemetry-spool">—</dd></div>
+          <div><dt>Retention</dt><dd id="telemetry-retention">—</dd></div>
+          <div><dt>Last success</dt><dd id="telemetry-last-success">—</dd></div>
+          <div><dt>Last error</dt><dd id="telemetry-last-error">—</dd></div>
+        </dl>
+        <p class="form-note" id="telemetry-note">Remote export is not configured. Run serverctl telemetry-setup on the phone.</p>
+      </section>
     </section>
 
   </main>
@@ -403,6 +418,6 @@
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="/vendor/xterm.js" defer></script>
 <script src="/vendor/addon-fit.js" defer></script>
-<script src="console.js?v=11" defer></script>
+<script src="console.js?v=12" defer></script>
 </body>
 </html>

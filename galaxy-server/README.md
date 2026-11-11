@@ -67,6 +67,7 @@ To update the site from Windows, push `site/` and the Python files, then restart
 ```powershell
 ..\platform-tools\adb.exe push site/. /sdcard/Download/galaxy-site/
 ..\platform-tools\adb.exe push status.py /sdcard/Download/galaxy-status.py
+..\platform-tools\adb.exe push telemetry.py /sdcard/Download/galaxy-telemetry.py
 ```
 
 In Termux, after storage permission has been granted:
@@ -74,6 +75,7 @@ In Termux, after storage permission has been granted:
 ```sh
 cp -R ~/storage/downloads/galaxy-site/. ~/galaxy-server/site/
 cp ~/storage/downloads/galaxy-status.py ~/galaxy-server/status.py
+cp ~/storage/downloads/galaxy-telemetry.py ~/galaxy-server/telemetry.py
 cp ~/galaxy-server/site/console.html ~/galaxy-server/priv/console.html
 ~/galaxy-server/serverctl restart
 ```
@@ -107,7 +109,7 @@ A browser reload reattaches to the shells the page had open, without asking for 
 | Status, charts, logs, actions | `status.py` on `127.0.0.1:8765` |
 | Password | `run/htpasswd`, `{SHA}` format, set with `~/galaxy-server/serverctl passwd` |
 
-Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`. `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
+Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET /api/telemetry`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`. `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
 
 `status.py` samples every 30 seconds into `run/galaxy.db`: raw samples are kept for 7 days and pruned, and the 24-hour and 7-day views aggregate those rows into 5- and 30-minute buckets in SQL. A bucket with no sample is returned as a gap, never as a zero, so the charts show missing data as missing. Health is computed server-side from memory, storage, battery, service states, tunnel readiness and the HTTPS probe, and returned as `health` plus `alerts`; values older than four sample intervals are marked stale and a component with no reading is reported as not monitored.
 
@@ -122,6 +124,18 @@ Per-service numbers come from `/proc/<pid>/status` (`VmRSS`) and `/proc/<pid>/st
 Stopping the server takes the console down with it, because Nginx serves the console. The way back is the phone: `~/galaxy-server/serverctl start`.
 
 Battery and temperature come from `termux-battery-status`, which needs both the Termux:API app and the `termux-api` package. Without them the cards report `n/a` and everything else still works. Android blocks `/proc/uptime`, `/proc/loadavg`, `/sys/class/power_supply` and `/sys/class/net` from a non-root app, so uptime comes from `CLOCK_BOOTTIME` and load average is not shown at all.
+
+## Remote telemetry (Axiom)
+
+The server had no remote telemetry sink before this change: samples, events and logs live on the phone. `telemetry.py` adds an optional Axiom export alongside them. Local files and SQLite stay authoritative, so an Axiom outage does not change the console or lose operational data.
+
+- `run/axiom.json` (mode 0600) holds the edge endpoint, dataset, API token and retention. Deployment preserves `run/`.
+- Batches of up to 100 structured events are posted as NDJSON, with retries, a bounded disk spool and redaction before anything leaves the phone. Retention is a dataset setting and lowering it deletes older Axiom data, so the command refuses without `--force-lower`.
+- The first start with no cursor forwards existing `events` rows and the current log files from the beginning; offsets only advance for lines that were queued.
+- `serverctl telemetry-setup`, `telemetry-test`, `telemetry-status`, `telemetry-retention`, `telemetry-backfill`.
+- The Settings view shows export state from `/api/telemetry`; the token is never returned.
+
+See `AXIOM.md` for the audit, event schema, dashboards and rollback.
 
 ## Checks still required on the phone
 

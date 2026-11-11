@@ -147,7 +147,7 @@
     }
     if (route === 'metrics') { renderCharts(); }
     if (route === 'logs') { loadLogs(); }
-    if (route === 'settings') { loadSettings(); loadEvents(); }
+    if (route === 'settings') { loadSettings(); loadEvents(); loadTelemetry(); }
     if (route === 'services' || route === 'networking') { loadEvents(); }
   }
 
@@ -773,6 +773,32 @@
     }).catch(function (error) { toast('Settings: ' + error.message, 'error'); });
   }
 
+  function loadTelemetry() {
+    api('/api/telemetry').then(function (data) {
+      data = data || {};
+      var labels = {off: 'Off', error: 'Configuration error', idle: 'Waiting for first batch',
+                    ok: 'Exporting', degraded: 'Degraded'};
+      $('#telemetry-state').textContent = labels[data.state] || 'Unknown';
+      $('#telemetry-dataset').textContent = data.dataset
+        ? data.dataset + ' · ' + (data.endpoint || '') : 'not configured';
+      $('#telemetry-exported').textContent = (data.exported || 0) + ' events · ' +
+        (data.batches || 0) + ' batches · ' + (data.failed || 0) + ' failed';
+      $('#telemetry-queued').textContent = (data.queued || 0) + ' queued · ' +
+        (data.dropped || 0) + ' dropped';
+      $('#telemetry-spool').textContent = (data.spool_events || 0) + ' events · ' +
+        (data.spool_kb || 0) + ' kB';
+      $('#telemetry-retention').textContent = data.retention_days
+        ? data.retention_days + ' days' : '—';
+      $('#telemetry-last-success').textContent = data.last_success_at || 'never';
+      $('#telemetry-last-error').textContent = data.last_error || 'none';
+      var note = 'Events are sent to Axiom as well as kept in the local files.';
+      if (data.config_error) { note = data.config_error; }
+      else if (!data.enabled) { note = 'Remote export is off. Run serverctl telemetry-setup on the phone to enable it.'; }
+      else if (data.state === 'degraded') { note = 'The last export failed; events are buffered and retried.'; }
+      $('#telemetry-note').textContent = note;
+    }).catch(function () { /* telemetry is optional; leave the card at its placeholders */ });
+  }
+
   function renderBuild(status) {
     $('#build-device').textContent = status.host.device;
     $('#build-android').textContent = (status.host.android || '—') + ' · ' + status.host.arch;
@@ -1333,6 +1359,7 @@
     loadTimeline(state.range);
     loadEvents();
     loadSettings();
+    loadTelemetry();
     state.statusTimer = setInterval(function () {
       if (document.visibilityState === 'visible') { refreshStatus(); }
     }, 10000);

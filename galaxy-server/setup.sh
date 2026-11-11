@@ -5,7 +5,7 @@ pkg update -y
 pkg upgrade -y
 pkg install -y python git openssh nginx curl termux-api
 mkdir -p "$HOME/.termux/boot" "$HOME/galaxy-server/run" "$HOME/galaxy-server/log" "$HOME/galaxy-server/priv"
-cp -R site status.py serverctl supervise.sh autodeploy.py "$HOME/galaxy-server/"
+cp -R site status.py telemetry.py serverctl supervise.sh autodeploy.py "$HOME/galaxy-server/"
 cp site/console.html "$HOME/galaxy-server/priv/console.html"
 chmod 600 "$HOME/galaxy-server/priv/console.html"
 chmod 700 "$HOME/galaxy-server/serverctl" "$HOME/galaxy-server/supervise.sh"

@@ -172,3 +172,46 @@ test('reload reattaches to open shells and extra shells get their own tab', asyn
     await browser.close();
   }
 });
+
+test('settings renders the remote telemetry card from the API', async () => {
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('http://console.test/**', async route => {
+      const url = new URL(route.request().url());
+      const reply = data => route.fulfill({ json: data });
+      if (url.pathname === '/api/telemetry') {
+        return reply({ state: 'ok', enabled: true, configured: true, config_error: null,
+          endpoint: 'us-east-1.aws.edge.axiom.co', dataset: 'galaxy-server',
+          retention_days: 30, queued: 0, spool_events: 0, spool_kb: 0, exported: 42,
+          failed: 0, rejected: 0, dropped: 0, batches: 3,
+          last_success_at: '2026-11-11T10:00:00Z', last_error: null });
+      }
+      if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
+      if (url.pathname === '/api/settings') {
+        return reply({ settings: { host_probes: false }, sample_seconds: 30, session_hours: 12,
+          db: { path: '/run/galaxy.db', size_kb: 1, rows: { samples: 1 }, raw_retention_days: 7 } });
+      }
+      if (url.pathname === '/api/events') { return reply({ audits: [] }); }
+      if (url.pathname === '/api/timeline') { return reply({ points: [], events: [] }); }
+      if (url.pathname.startsWith('/api/')) { return reply({}); }
+      const file = url.pathname === '/console' ? 'console.html' : url.pathname.slice(1);
+      const body = await readFile(path.join(__dirname, 'site', file));
+      return route.fulfill({ body, contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
+
+    await page.goto('http://console.test/console#/settings');
+    await page.waitForFunction(() => document.querySelector('#telemetry-state').textContent === 'Exporting');
+    assert.equal(await page.locator('#telemetry-dataset').textContent(), 'galaxy-server · us-east-1.aws.edge.axiom.co');
+    assert.match(await page.locator('#telemetry-exported').textContent(), /42 events/);
+    assert.equal(await page.locator('#telemetry-retention').textContent(), '30 days');
+    assert.equal(await page.locator('#telemetry-last-success').textContent(), '2026-11-11T10:00:00Z');
+    assert.equal(await page.locator('#telemetry-last-error').textContent(), 'none');
+    assert.equal(await page.locator('#telemetry-note').textContent(), 'Events are sent to Axiom as well as kept in the local files.');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

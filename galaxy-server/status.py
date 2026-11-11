@@ -38,6 +38,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, quote, urlparse
 
+import telemetry
+
 HOME = os.path.expanduser('~')
 BASE = os.path.join(HOME, 'galaxy-server')
 LOG_DIR = os.path.join(BASE, 'log')
@@ -50,6 +52,10 @@ PASSFILE = os.path.join(RUN_DIR, 'htpasswd')
 TERMINAL_PASSFILE = os.path.join(RUN_DIR, 'terminal.passwd')
 SERVERCTL = os.path.join(BASE, 'serverctl')
 METRICS_URL = 'http://127.0.0.1:20241'
+
+# Remote export is optional: with no run/axiom.json every emit is a no-op and
+# the local files and database stay exactly as they were.
+TELEMETRY = telemetry.Telemetry(RUN_DIR)
 
 SAMPLE_SECONDS = 30
 PROBE_SECONDS = 60
@@ -491,6 +497,7 @@ def record_check(host, result):
         db.execute('INSERT OR REPLACE INTO checks(ts, host, ok, status, ms) VALUES (?,?,?,?,?)',
                    (int(time.time()), host, 1 if result.get('ok') else 0,
                     result.get('status'), result.get('ms')))
+    TELEMETRY.emit_check(host, result)
 
 
 # --------------------------------------------------------------------------- #
@@ -610,6 +617,35 @@ def sample_once():
             'processes': processes, 'cpu': cpu_pct, 'pids': pids}
 
 
+def _emit_sample(sample):
+    """One structured metric row per sampler tick, independent of the console."""
+    pids = sample['pids']
+    tun = sample['tunnel']
+    batt = sample['batt'] or {}
+    mem = sample['mem'] or {}
+    disk = sample['disk'] or {}
+    TELEMETRY.emit({
+        'event': 'galaxy.sample',
+        '_time': telemetry.utc_iso(sample['now']),
+        'uptime_s': int(_boottime()),
+        'mem_pct': mem.get('used_percent'),
+        'mem_used_mb': mem.get('used_mb'),
+        'mem_total_mb': mem.get('total_mb'),
+        'swap_pct': mem.get('swap_used_percent'),
+        'free_gb': disk.get('free_gb'),
+        'storage_pct': disk.get('used_percent'),
+        'batt_pct': batt.get('percent'),
+        'charging': bool(batt.get('charging')) if sample['batt'] else None,
+        'temp_c': batt.get('temperature_c'),
+        'cpu_pct': sample['cpu'],
+        'services': {key: bool(pids.get(key)) for key, _label, _needle in SERVICES},
+        'tunnel_ready': bool(tun.get('ready')),
+        'tunnel_connections': tun.get('connections'),
+        'tunnel_requests': tun.get('requests'),
+        'tunnel_errors': tun.get('errors'),
+    }, entry_point='sampler')
+
+
 def prune():
     cutoff = int(time.time()) - RAW_RETENTION_DAYS * 86400
     with DB_LOCK, _db() as db:
@@ -625,7 +661,8 @@ def sampler():
     while True:
         started = time.monotonic()
         try:
-            sample_once()
+            sample = sample_once()
+            _emit_sample(sample)
             STATE['tick'] += 1
             if STATE['tick'] % 4 == 3 and read_settings().get('host_probes'):
                 for host in HOSTNAMES:
@@ -790,6 +827,7 @@ def live_payload():
         alerts.append({'level': 'crit', 'text': 'public HTTPS check is failing'})
     health = 'crit' if any(a['level'] == 'crit' for a in alerts) else (
         'warn' if alerts else 'ok')
+    TELEMETRY.emit_health(health, alerts)
 
     cpu = None
     if last is not None:
@@ -1414,6 +1452,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self._json(200, payload)
             return
+        if path == '/api/telemetry':
+            self._json(200, TELEMETRY.status())
+            return
         if path == '/api/settings':
             db_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
             with DB_LOCK, _db() as db:
@@ -1715,8 +1756,16 @@ def main():
             raise SystemExit(str(error))
         print('Terminal password set')
         return
+    if len(sys.argv) >= 2 and sys.argv[1] == '--telemetry-backfill':
+        try:
+            limit = max(1, int(sys.argv[2])) if len(sys.argv) > 2 else 5000
+        except ValueError:
+            limit = 5000
+        print(json.dumps(TELEMETRY.backfill(LOG_FILES, LOG_DIR, DB_PATH, limit)))
+        return
     init_db()
     load_monitor()
+    TELEMETRY.start(LOG_FILES, LOG_DIR, DB_PATH)
     threading.Thread(target=sampler, daemon=True).start()
     threading.Thread(target=reap_terminals, daemon=True).start()
     Server(('127.0.0.1', 8765), Handler).serve_forever()
