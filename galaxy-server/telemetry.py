@@ -771,7 +771,10 @@ class Telemetry:
         try:
             connection = sqlite3.connect(uri, uri=True, timeout=3)
             sent += self._forward_audits(connection, state, budget)
-            sent += self._forward_sample_history(connection, state, floor, budget - sent)
+            remaining = budget - sent
+            # Split what is left so a long sample backlog cannot starve checks.
+            sent += self._forward_sample_history(connection, state, floor,
+                                                 (remaining + 1) // 2)
             sent += self._forward_check_history(connection, state, floor, budget - sent)
         except sqlite3.Error:
             return sent

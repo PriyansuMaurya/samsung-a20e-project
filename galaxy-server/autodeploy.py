@@ -13,7 +13,9 @@ import urllib.request
 
 BASE = Path.home() / 'galaxy-server'
 REPO = 'git@github.com:PriyansuMaurya/samsung-a20e-project.git'
-FILES = ('site', 'status.py', 'telemetry.py', 'serverctl', 'supervise.sh', 'autodeploy.py')
+# status.py is last on purpose: it imports telemetry, and a supervisor restart
+# between the two copies would crash-loop until the import landed.
+FILES = ('site', 'telemetry.py', 'serverctl', 'supervise.sh', 'autodeploy.py', 'status.py')
 
 
 def run(*args, **kwargs):
