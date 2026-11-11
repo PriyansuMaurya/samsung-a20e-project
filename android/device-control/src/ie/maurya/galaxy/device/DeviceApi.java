@@ -232,6 +232,9 @@ final class DeviceApi {
         out.put("storage", storage());
         out.put("brightness", brightnessValue());
         out.put("brightness_writable", Settings.System.canWrite(context));
+        out.put("rotation", rotationState());
+        out.put("video", new JSONObject().put("supported", true)
+                .put("size", "1280x720").put("audio", true));
         out.put("recording_supported", true);
         return out;
     }
@@ -301,7 +304,7 @@ final class DeviceApi {
         out.put("free_bytes", free);
         out.put("used_bytes", total - free);
         JSONObject folders = new JSONObject();
-        for (String name : new String[]{"photos", "recordings", "media"}) {
+        for (String name : new String[]{"photos", "recordings", "media", "videos"}) {
             File directory = new File(context.getFilesDir(), name);
             JSONObject entry = new JSONObject();
             entry.put("bytes", folderSize(directory));
@@ -361,6 +364,40 @@ final class DeviceApi {
                 .put("automatic", Settings.System.getInt(context.getContentResolver(),
                         Settings.System.SCREEN_BRIGHTNESS_MODE, 0)
                         != Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+    }
+
+    /** Values are degrees, or null for the automatic accelerometer rotation. */
+    JSONObject rotation(Integer degrees) throws Exception {
+        if (degrees != null && !Settings.System.canWrite(context)) {
+            throw new ApiError(403,
+                    "the write-settings app-op is not granted; run: adb shell appops set "
+                            + context.getPackageName() + " android:write_settings allow");
+        }
+        if (degrees == null) {
+            Settings.System.putInt(context.getContentResolver(),
+                    Settings.System.ACCELEROMETER_ROTATION, 1);
+        } else {
+            int quarters = Math.floorMod(degrees / 90, 4);
+            Settings.System.putInt(context.getContentResolver(),
+                    Settings.System.ACCELEROMETER_ROTATION, 0);
+            Settings.System.putInt(context.getContentResolver(),
+                    Settings.System.USER_ROTATION, quarters);
+        }
+        return rotationState();
+    }
+
+    JSONObject rotationState() throws Exception {
+        int automatic = Settings.System.getInt(context.getContentResolver(),
+                Settings.System.ACCELEROMETER_ROTATION, 1);
+        int user = Settings.System.getInt(context.getContentResolver(),
+                Settings.System.USER_ROTATION, 0);
+        android.view.WindowManager windows =
+                (android.view.WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        int display = windows == null ? 0 : windows.getDefaultDisplay().getRotation();
+        return new JSONObject().put("automatic", automatic == 1)
+                .put("user_degrees", user * 90)
+                .put("display_degrees", display * 90)
+                .put("writable", Settings.System.canWrite(context));
     }
 
     JSONObject sensors() throws Exception {

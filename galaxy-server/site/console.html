@@ -298,11 +298,18 @@
             <label>Camera <select id="cam-id" class="select"></select></label>
             <label>Size <select id="cam-size" class="select"></select></label>
             <label>Rate <select id="cam-fps" class="select"><option value="2">2 fps</option><option value="4" selected>4 fps</option><option value="8">8 fps</option></select></label>
-            <button class="btn primary" type="button" id="cam-start">Start preview</button>
-            <button class="btn" type="button" id="cam-stop">Stop</button>
+            <button class="btn primary" type="button" id="cam-toggle" aria-pressed="false">Start preview</button>
+            <button class="btn" type="button" id="video-toggle" disabled>Record video</button>
             <button class="btn" type="button" id="cam-snapshot">Take photo</button>
           </div>
-          <p class="footnote" id="cam-note">Video recording is not available: MediaRecorder needs the sensor for itself, which would end the preview. Stills and the live stream share one session instead.</p>
+          <p class="footnote" id="cam-note">Video is recorded at 720p30 with sound while this preview keeps running, because both share one camera session. Sound is dropped while the microphone is already streaming or recording.</p>
+          <p class="mono muted" id="video-state">not recording</p>
+          <div class="table-wrap">
+            <table class="table" id="videos-table">
+              <thead><tr><th>Video</th><th class="right">Size</th><th class="right">Actions</th></tr></thead>
+              <tbody><tr><td colspan="3" class="empty">No videos yet.</td></tr></tbody>
+            </table>
+          </div>
         </section>
 
         <section class="card">
@@ -315,7 +322,6 @@
             <div><strong>Vibration</strong><p class="sub">Short buzz on the phone, for finding it nearby.</p></div>
             <div class="btn-row tight">
               <button class="btn small" type="button" data-vibrate="120">Short</button>
-              <button class="btn small" type="button" data-vibrate="400">Medium</button>
               <button class="btn small" type="button" data-vibrate="1200">Long</button>
             </div>
           </div>
@@ -323,6 +329,16 @@
             <label for="brightness">Screen brightness</label>
             <input type="range" id="brightness" min="1" max="255" step="1" value="128">
             <output id="brightness-value">—</output>
+          </div>
+          <div class="slider-row">
+            <label for="rotation">Screen rotation</label>
+            <select id="rotation" class="select">
+              <option value="auto">Automatic</option>
+              <option value="0">Upright</option>
+              <option value="90">Landscape left</option>
+              <option value="270">Landscape right</option>
+            </select>
+            <output id="rotation-state">—</output>
           </div>
           <div id="volume-sliders" class="sliders"></div>
         </section>
@@ -352,7 +368,6 @@
           <div class="card-head"><div><h2>Media</h2><p class="card-sub">Upload audio to the phone, then play it through its speaker.</p></div></div>
           <div class="device-toolbar">
             <label class="grow">Upload <input type="file" id="media-file" accept="audio/*,video/mp4"></label>
-            <button class="btn small" type="button" id="media-refresh">Refresh</button>
           </div>
           <p class="footnote" id="media-note">Nothing playing.</p>
           <div class="table-wrap">
@@ -362,9 +377,7 @@
             </table>
           </div>
           <div class="btn-row">
-            <button class="btn small" type="button" id="media-pause">Pause</button>
-            <button class="btn small" type="button" id="media-resume">Resume</button>
-            <button class="btn small" type="button" id="media-stop">Stop</button>
+            <button class="btn small" type="button" id="media-stop">Stop playback</button>
           </div>
         </section>
       </div>
@@ -562,6 +575,6 @@
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="/vendor/xterm.js" defer></script>
 <script src="/vendor/addon-fit.js" defer></script>
-<script src="console.js?v=16" defer></script>
+<script src="console.js?v=17" defer></script>
 </body>
 </html>

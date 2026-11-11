@@ -249,6 +249,7 @@ test('device view drives the app through the proxy', async () => {
             storage: { free_bytes: 5 * 1024 * 1024 * 1024, total_bytes: 23 * 1024 * 1024 * 1024,
               folders: { photos: { count: 1, bytes: 1024 }, recordings: { count: 1, bytes: 2048 } } },
             volume: { streams: { music: { index: 9, max: 15 }, alarm: { index: 15, max: 15 } } },
+            rotation: { automatic: true, user_degrees: 0, writable: true },
             connectivity: { wifi: true, wifi_enabled: true, ssid: 'home-wifi',
               addresses: ['192.168.0.74', 'fe80::1'], down_mbps: 72, up_mbps: 18,
               metered: false, validated: true, bluetooth_enabled: false, airplane_mode: false }
@@ -266,10 +267,16 @@ test('device view drives the app through the proxy', async () => {
         if (url.pathname === '/api/device/media') {
           return reply({ files: [{ file: 'tone.wav', bytes: 32044, modified: 1700000000000 }] });
         }
+        if (url.pathname === '/api/device/videos') {
+          return reply({ files: [{ file: 'vid-1.mp4', bytes: 1048576, modified: 1700000000000 }] });
+        }
         if (url.pathname === '/api/device/control') {
           const action = (route.request().postDataJSON() || {}).action;
           if (action === 'snapshot') { return reply({ ok: true, file: 'cam0-2.jpg', bytes: 4096, size: '1920x1080' }); }
           if (action === 'record-stop') { return reply({ ok: true, file: 'mic-2.wav', bytes: 8192, seconds: 4 }); }
+          if (action === 'video-start') { return reply({ ok: true, recording: true, audio: true }); }
+          if (action === 'video-stop') { return reply({ ok: true, file: 'vid-2.mp4', bytes: 2048, seconds: 1, audio: true }); }
+          if (action === 'rotation') { return reply({ automatic: false, user_degrees: 90, writable: true }); }
           return reply({ ok: true });
         }
         return reply({});
@@ -295,11 +302,17 @@ test('device view drives the app through the proxy', async () => {
     assert.equal(await page.locator('#recordings-table tbody tr').count(), 1);
     assert.equal(await page.locator('#media-table tbody tr').count(), 1);
     assert.equal(await page.locator('#volume-sliders .slider-row').count(), 2);
+    assert.equal(await page.locator('#videos-table tbody tr').count(), 1);
+    // The audit removed duplicated controls rather than leaving two of each.
+    assert.equal(await page.locator('#cam-stop').count(), 0);
+    assert.equal(await page.locator('#media-pause').count(), 0);
+    assert.equal(await page.locator('#media-refresh').count(), 0);
+    assert.equal(await page.locator('[data-vibrate="400"]').count(), 0);
 
     // Accessories go through the allowlisted proxy action, not a raw endpoint.
     await page.locator('#torch-toggle').click();
     await page.waitForFunction(() => document.querySelector('#torch-state').textContent === 'On');
-    await page.locator('[data-vibrate="400"]').click();
+    await page.locator('[data-vibrate="1200"]').click();
     await page.locator('#brightness').fill('200');
     await page.evaluate(() => {
       const input = document.querySelector('#brightness');
@@ -309,9 +322,19 @@ test('device view drives the app through the proxy', async () => {
     await page.waitForTimeout(400);
 
     // Preview uses the stream endpoint and starts/stops with navigation.
-    await page.locator('#cam-start').click();
+    await page.locator('#cam-toggle').click();
     const source = await page.locator('#cam-preview').getAttribute('src');
     assert.match(source, /^\/api\/device\/camera\/stream\?camera=0&fps=4/);
+
+    // Video shares the session that the preview already holds.
+    await page.locator('#video-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#video-toggle').textContent === 'Stop recording');
+    await page.locator('#video-toggle').click();
+    await page.waitForFunction(() => /saved vid-2\.mp4/.test(document.querySelector('#video-state').textContent));
+
+    await page.locator('#rotation').selectOption('90');
+    await page.waitForFunction(() => document.querySelector('#rotation-state').textContent === '90°');
+
     await page.locator('[data-route="overview"]').click();
     await page.waitForFunction(() => document.querySelector('#cam-preview').hasAttribute('src') === false);
 
@@ -325,9 +348,11 @@ test('device view drives the app through the proxy', async () => {
     const torch = calls.filter(call => call.path === '/api/device/control' && call.body.action === 'torch');
     assert.deepEqual(torch.map(call => call.body.payload.on), [true]);
     const vibrate = calls.filter(call => call.body && call.body.action === 'vibrate');
-    assert.deepEqual(vibrate.map(call => call.body.payload.ms), [400]);
+    assert.deepEqual(vibrate.map(call => call.body.payload.ms), [1200]);
     const brightness = calls.filter(call => call.body && call.body.action === 'brightness');
     assert.deepEqual(brightness.map(call => call.body.payload.value), [200]);
+    const rotation = calls.filter(call => call.body && call.body.action === 'rotation');
+    assert.deepEqual(rotation.map(call => call.body.payload.degrees), [90]);
     const stop = calls.filter(call => call.body && call.body.action === 'camera-stop');
     assert.ok(stop.length >= 1);
     const snapshot = calls.filter(call => call.body && call.body.action === 'snapshot');

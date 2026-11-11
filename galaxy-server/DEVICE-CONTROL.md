@@ -14,6 +14,8 @@ state), not taken from a spec sheet.
 | Third camera id | Camera2 id `2`, reported as front-facing | listed, not offered by default |
 | Flashlight | camera `0` LED, `FLASH_INFO_AVAILABLE` | working |
 | Microphone | `AudioRecord`, 16 kHz mono PCM | working |
+| Video recording | Camera2 session + `MediaRecorder`, H.264 720p30 and AAC | implemented, shares the preview session |
+| Screen rotation | `Settings.System` user rotation, needs `WRITE_SETTINGS` | implemented |
 | Speaker | `MediaPlayer` + five audio streams | working |
 | Vibration | `Vibrator`, one-shot effects | working |
 | Screen brightness | `Settings.System`, needs the `WRITE_SETTINGS` app-op | working |
@@ -56,6 +58,8 @@ endpoint used through `status.py`.
 | Live preview | `GET /api/device/camera/stream?camera=&size=&fps=` (multipart MJPEG) | 1-15 fps, 5-minute cap per connection |
 | Photo | `POST /api/device/control {"action":"snapshot"}` | JPEG at the current preview size, saved in app storage |
 | Gallery | `GET /api/device/photos`, `GET /api/device/photo?file=`, `photo-delete` | served as image/jpeg |
+| Video | `action: video-start` / `video-stop`, `GET /api/device/videos`, `video`, `video-delete` | 720p30 MP4 with AAC sound while the preview keeps streaming |
+| Rotation | `action: rotation {degrees}` | 0/90/180/270, or `degrees: null` for automatic; locked without `WRITE_SETTINGS` |
 | Flashlight | `action: torch` | through the open session when the preview holds camera 0, else `setTorchMode` |
 | Vibration | `action: vibrate {ms}` | 1-5000 ms |
 | Brightness | `action: brightness {value}` | 1-255, switches the panel to manual mode |
@@ -70,10 +74,13 @@ endpoint used through `status.py`.
 
 ## 4. Android restrictions, stated plainly
 
-1. **No video recording together with the preview.** `MediaRecorder` takes the
-   camera for itself, which would end the preview and the snapshot stream. The
-   app therefore records stills and a JPEG live stream, not video. Recording
-   video instead would mean giving up the live view while it runs.
+1. **Video and preview share one session.** Camera2 allows a JPEG stream and
+   MediaRecorder's surface as two targets of the same session, so recording does
+   not end the preview; `MediaRecorder`'s own camera binding, which does end it,
+   is not used. Two consequences: the video surface caps resolution at 1280x720
+   while the JPEG stream keeps its own size, and sound is dropped when the
+   microphone is already streaming or recording, because only one capture can
+   hold it.
 2. **One camera user at a time.** While the preview holds camera `0`,
    `CameraManager.setTorchMode()` fails with `CAMERA_IN_USE`; the app sets
    `FLASH_MODE_TORCH` on the open capture session instead. The torch is released
@@ -89,17 +96,21 @@ endpoint used through `status.py`.
    `adb shell appops set ie.maurya.galaxy.device android:write_settings allow`;
    without it the endpoint returns 403 and the UI shows "brightness locked".
    Automatic brightness is disabled when a manual value is written.
-6. **The light sensor reports nothing** on this unit (no `TYPE_LIGHT`), so the
+6. **Rotation is a setting, not a lock.** A chosen angle disables the
+   accelerometer rotation and stays until automatic is selected; an app that
+   forces its own orientation (camera, video players) can still override it for
+   its own window.
+7. **The light sensor reports nothing** on this unit (no `TYPE_LIGHT`), so the
    table omits it rather than showing a zero.
-7. **The SSID stays hidden.** Android 10+ returns `<unknown ssid>` unless the
+8. **The SSID stays hidden.** Android 10+ returns `<unknown ssid>` unless the
    app also holds a location grant, which it deliberately does not request; the
    app reports `hidden by Android` rather than a misleading name. Radios are
    read-only here, so no toggle in this console can take the phone off WiFi.
-8. **Streams are time-boxed.** Camera and audio connections close after five
+9. **Streams are time-boxed.** Camera and audio connections close after five
    minutes; the dashboard reconnects by restarting the preview.
-9. **Uploads are bounded.** 8 MB per file, and only audio/video container types
+10. **Uploads are bounded.** 8 MB per file, and only audio/video container types
    the `MediaPlayer` can decode are worth uploading.
-10. **The app must be armed.** The control service runs as a foreground service
+11. **The app must be armed.** The control service runs as a foreground service
    with `camera|microphone` types; disarming it or stopping the app closes the
    port. The console reports "control app not running" instead of failing
    silently.

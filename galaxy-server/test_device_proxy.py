@@ -165,6 +165,20 @@ class DeviceProxyTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(FakeDevice.calls[-1][1], '/camera/snapshot?camera=1')
 
+        code, payload = self.call('POST', '/api/device/control',
+                                  json.dumps({'action': 'rotation',
+                                              'payload': {'degrees': 90}}))
+        self.assertEqual(code, 200)
+        method, path, forwarded = FakeDevice.calls[-1]
+        self.assertEqual((method, path), ('POST', '/rotation'))
+        self.assertEqual(json.loads(forwarded['body']), {'degrees': 90})
+
+        code, payload = self.call('POST', '/api/device/control',
+                                  json.dumps({'action': 'video-start',
+                                              'payload': {'audio': False}}))
+        self.assertEqual(code, 200)
+        self.assertEqual(FakeDevice.calls[-1][1], '/video/start')
+
     def test_streaming_and_filename_rules(self):
         code, raw = self.call('GET', '/api/device/camera/stream?camera=0&fps=2')
         self.assertEqual(code, 200)

@@ -65,6 +65,11 @@ final class AudioController {
         }
     }
 
+    /** True while the microphone is held: MediaRecorder cannot share it. */
+    boolean busy() {
+        return recording || !subscribers.isEmpty();
+    }
+
     JSONObject status() throws Exception {
         JSONObject payload = new JSONObject()
                 .put("recording", recording)

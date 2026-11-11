@@ -27,7 +27,7 @@ Delivery, failure recovery and resource use were validated afterwards; see
 | `run/htpasswd`, `run/terminal.passwd` | Console and terminal credentials | 43 + 120 | none | **High** | n/a | no |
 | `run/settings.json`, `run/monitor.json` | UI settings, previous pids | 21 + 101 | tiny | Low | n/a | no |
 | `run/device.json` | Pairing token for the device control app | ~90 | none | **High** (loopback bearer token) | n/a | no |
-| app storage `photos/`, `recordings/`, `media/` | Stills, WAV recordings, uploaded audio | 0 bytes until used | per action | **High** (images, voice, media) | manual, per item | no |
+| app storage `photos/`, `videos/`, `recordings/`, `media/` | Stills, MP4 video, WAV recordings, uploaded audio | 0 bytes until used | per action | **High** (images, video, voice, media) | manual, per item | no |
 | `run/telemetry-state.json` | Forwarding cursors | 293 | tiny | Low | n/a | no |
 | `priv/console.html` | Shell copy served at `/console` | 23,597 | per deploy | Low | n/a | no |
 | `site/`, `site.previous/` | Static console assets | ~0.7 MB each | per deploy | Low | n/a | no |
@@ -41,8 +41,8 @@ removing the manual `run/pull` checkout. About 25 MB of what remains is the
 autodeploy checkout (Windows platform-tools included) and 1.4 MB is duplicated
 site assets.
 
-The companion app keeps its own directory outside Termux: photos, recordings
-and uploaded media live in `/data/data/ie.maurya.galaxy.device/files/` and are
+The companion app keeps its own directory outside Termux: photos, video,
+recordings and uploaded media live in `/data/data/ie.maurya.galaxy.device/files/` and are
 never copied into `~/galaxy-server`. They are readable only by the app and are
 downloaded through the console one file at a time; the same route offers a
 delete. The pairing token is the only credential the server stores for it, and

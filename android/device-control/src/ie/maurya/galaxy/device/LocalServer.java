@@ -212,6 +212,47 @@ final class LocalServer {
             writeJson(out, 200, api.brightness(request.json().optInt("value", -1)));
             return;
         }
+        if ("GET".equals(method) && "/rotation".equals(path)) {
+            writeJson(out, 200, api.rotationState());
+            return;
+        }
+        if ("POST".equals(method) && "/rotation".equals(path)) {
+            JSONObject body = request.json();
+            Integer degrees = body.has("degrees") && !body.isNull("degrees")
+                    ? body.optInt("degrees", 0) : null;
+            writeJson(out, 200, api.rotation(degrees));
+            return;
+        }
+
+        if ("GET".equals(method) && "/video/status".equals(path)) {
+            writeJson(out, 200, camera.videoStatus());
+            return;
+        }
+        if ("POST".equals(method) && "/video/start".equals(path)) {
+            boolean audio = request.json().optBoolean("audio", true) && !this.audio.busy();
+            writeJson(out, 200, camera.startVideo(audio));
+            return;
+        }
+        if ("POST".equals(method) && "/video/stop".equals(path)) {
+            writeJson(out, 200, camera.stopVideo());
+            return;
+        }
+        if ("GET".equals(method) && "/videos".equals(path)) {
+            writeJson(out, 200, listFolder("videos"));
+            return;
+        }
+        if ("GET".equals(method) && "/video".equals(path)) {
+            writeFile(out, folderFile("videos", request.query.getOrDefault("file", "")));
+            return;
+        }
+        if ("POST".equals(method) && "/video/delete".equals(path)) {
+            File target = folderFile("videos", request.json().optString("file", ""));
+            if (!target.delete()) {
+                throw new DeviceApi.ApiError(500, "could not delete the video");
+            }
+            writeJson(out, 200, new JSONObject().put("ok", true));
+            return;
+        }
 
         if ("POST".equals(method) && "/camera/start".equals(path)) {
             JSONObject body = request.json();
@@ -533,6 +574,9 @@ final class LocalServer {
 
     private static String contentType(String name) {
         String lower = name.toLowerCase(Locale.US);
+        if (lower.endsWith(".webm")) {
+            return "video/webm";
+        }
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
             return "image/jpeg";
         }

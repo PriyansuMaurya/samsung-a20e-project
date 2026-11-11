@@ -1177,9 +1177,10 @@
 
   // ------------------------------------------------------------------ device
   var deviceState = {
-    summary: null, photos: [], recordings: [], media: [],
+    summary: null, photos: [], recordings: [], media: [], videos: [],
     cameraOn: false, torch: false, listening: null, recordStarted: 0,
-    recordTimer: null, brightnessTimer: null, camRetry: null
+    recordTimer: null, brightnessTimer: null, camRetry: null,
+    videoStarted: 0, videoTimer: null
   };
 
   function deviceControl(action, payload) {
@@ -1201,6 +1202,7 @@
     api('/api/device/summary').then(function (summary) {
       deviceState.summary = summary;
       if (!summary.paired) {
+        $('#device-pair-form').hidden = false;
         deviceBanner('warn', 'Control app not paired', 'Open the Galaxy Device app and pair.');
         return;
       }
@@ -1217,13 +1219,17 @@
         deviceBanner('crit', 'Control app not answering', summary.error || '');
         return;
       }
-      renderCapabilities(summary.capabilities || {});
+      var caps = summary.capabilities || {};
+      $('#device-pair-form').hidden = true;
+      renderCapabilities(caps);
+      renderRotation(caps.rotation || {});
       renderPower(summary);
       renderVolume(summary.volume || {});
       loadSensors();
       loadPhotos();
       loadRecordings();
       loadMedia();
+      loadVideos();
     }).catch(function (error) {
       deviceBanner('crit', 'Control app unreachable', error.message);
     });
@@ -1269,6 +1275,27 @@
       select.appendChild(el('option', { value: size, text: size }));
     });
     select.value = wanted && sizes.indexOf(wanted) >= 0 ? wanted : '';
+  }
+
+  function renderRotation(rotation) {
+    var select = $('#rotation');
+    if (rotation.automatic) {
+      select.value = 'auto';
+    } else {
+      var degrees = String(rotation.user_degrees || 0);
+      select.value = degrees === '180' ? 'auto' : degrees;
+    }
+    select.disabled = rotation.writable === false;
+    $('#rotation-state').textContent = rotation.writable === false ? 'locked'
+      : (rotation.automatic ? 'auto' : (rotation.user_degrees || 0) + '°');
+  }
+
+  function setRotation(value) {
+    var payload = value === 'auto' ? { degrees: null } : { degrees: Number(value) };
+    deviceControl('rotation', payload).then(function (rotation) {
+      renderRotation(rotation);
+      toast(value === 'auto' ? 'Rotation follows the phone' : 'Screen turned to ' + value + '°');
+    }).catch(function (error) { toast('Rotation: ' + error.message, 'error'); });
   }
 
   function mb(value) {
@@ -1518,6 +1545,9 @@
     image.hidden = false;
     $('#cam-placeholder').hidden = true;
     $('#cam-live').hidden = false;
+    $('#cam-toggle').textContent = 'Stop preview';
+    $('#cam-toggle').setAttribute('aria-pressed', 'true');
+    $('#video-toggle').disabled = false;
     deviceState.cameraOn = true;
   }
 
@@ -1528,10 +1558,85 @@
     image.removeAttribute('src');
     $('#cam-placeholder').hidden = false;
     $('#cam-live').hidden = true;
+    $('#cam-toggle').textContent = 'Start preview';
+    $('#cam-toggle').setAttribute('aria-pressed', 'false');
+    $('#video-toggle').disabled = true;
+    $('#video-toggle').textContent = 'Record video';
+    clearInterval(deviceState.videoTimer);
+    deviceState.videoStarted = 0;
+    $('#video-state').textContent = 'not recording';
     deviceState.cameraOn = false;
     deviceControl('camera-stop').catch(function () {
       if (!silent) { toast('The camera may still be open', 'error'); }
     });
+  }
+
+  function startVideo() {
+    deviceControl('video-start', { audio: !deviceState.listening && !deviceState.recordStarted })
+      .then(function (status) {
+        deviceState.videoStarted = Date.now();
+        $('#video-toggle').textContent = 'Stop recording';
+        $('#video-toggle').setAttribute('aria-pressed', 'true');
+        $('#video-state').textContent = 'recording 720p30' +
+          (status.audio ? ' with sound' : ' without sound (microphone busy)');
+        clearInterval(deviceState.videoTimer);
+        deviceState.videoTimer = setInterval(function () {
+          var seconds = Math.round((Date.now() - deviceState.videoStarted) / 1000);
+          $('#video-state').textContent = 'recording 720p30 · ' + seconds + 's';
+        }, 500);
+      }).catch(function (error) {
+        toast('Video: ' + error.message, 'error');
+      });
+  }
+
+  function stopVideo() {
+    deviceControl('video-stop').then(function (result) {
+      clearInterval(deviceState.videoTimer);
+      deviceState.videoStarted = 0;
+      $('#video-toggle').textContent = 'Record video';
+      $('#video-toggle').setAttribute('aria-pressed', 'false');
+      $('#video-state').textContent = result.file
+        ? 'saved ' + result.file + ' · ' + Math.round(result.bytes / 1024) + ' kB · ' +
+          result.seconds + 's'
+        : 'not recording';
+      loadVideos();
+    }).catch(function (error) { toast('Video: ' + error.message, 'error'); });
+  }
+
+  function renderVideos(files) {
+    deviceState.videos = files;
+    var body = $('#videos-table').querySelector('tbody');
+    body.textContent = '';
+    if (!files.length) {
+      body.appendChild(el('tr', {}, [el('td', { colspan: '3', class: 'empty',
+        text: 'No videos yet.' })]));
+      return;
+    }
+    files.slice().sort(function (a, b) { return b.modified - a.modified; }).forEach(function (file) {
+      body.appendChild(el('tr', {}, [
+        el('td', { class: 'mono', text: file.file }),
+        el('td', { class: 'right', text: mb(file.bytes) }),
+        el('td', { class: 'right' }, [
+          el('div', { class: 'btn-row tight' }, [
+            el('a', { class: 'btn small', href: '/api/device/video?file=' +
+              encodeURIComponent(file.file), text: 'Download' }),
+            el('button', { class: 'btn small', type: 'button', text: 'Delete',
+              onclick: function () {
+                deviceControl('video-delete', { file: file.file }).then(function () {
+                  toast('Video deleted');
+                  loadVideos();
+                }).catch(function (error) { toast(error.message, 'error'); });
+              } })
+          ])
+        ])
+      ]));
+    });
+  }
+
+  function loadVideos() {
+    api('/api/device/videos').then(function (data) {
+      renderVideos(data.files || []);
+    }).catch(function () { /* listed on the next refresh */ });
   }
 
   function takeSnapshot() {
@@ -1700,9 +1805,14 @@
         if (deviceState.cameraOn) { startCamera(); }
       }, 3000);
     });
-    $('#cam-start').addEventListener('click', startCamera);
-    $('#cam-stop').addEventListener('click', function () { stopCamera(false); });
+    $('#cam-toggle').addEventListener('click', function () {
+      if (deviceState.cameraOn) { stopCamera(false); } else { startCamera(); }
+    });
+    $('#video-toggle').addEventListener('click', function () {
+      if (deviceState.videoStarted) { stopVideo(); } else { startVideo(); }
+    });
     $('#cam-snapshot').addEventListener('click', takeSnapshot);
+    $('#rotation').addEventListener('change', function () { setRotation(this.value); });
     $('#torch-toggle').addEventListener('click', function () {
       setTorch(!deviceState.torch);
     });
@@ -1732,16 +1842,6 @@
       var file = this.files && this.files[0];
       this.value = '';
       if (file) { uploadMedia(file); }
-    });
-    $('#media-refresh').addEventListener('click', loadMedia);
-    $('#media-pause').addEventListener('click', function () {
-      deviceControl('media-control', { action: 'pause' })
-        .then(function (r) { $('#media-note').textContent = r.playing ? 'Paused ' + r.playing : 'Nothing playing'; })
-        .catch(function (error) { toast(error.message, 'error'); });
-    });
-    $('#media-resume').addEventListener('click', function () {
-      deviceControl('media-control', { action: 'resume' })
-        .catch(function (error) { toast(error.message, 'error'); });
     });
     $('#media-stop').addEventListener('click', function () {
       deviceControl('media-control', { action: 'stop' })

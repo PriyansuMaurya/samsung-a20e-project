@@ -2,7 +2,6 @@ package ie.maurya.galaxy.device;
 
 import android.content.Context;
 import android.graphics.ImageFormat;
-import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -13,11 +12,14 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
 import android.util.Size;
 import android.view.Surface;
+
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -30,18 +32,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Camera2 preview loop that doubles as the still-camera and the live-stream
- * source.
+ * Camera2 preview loop that doubles as the still-camera, the live-stream source
+ * and the video recorder.
  *
- * The device has no hardware encoder path exposed to a third-party app for
- * arbitrary screen content, and MediaRecorder would take the camera away from
- * the preview. So one repeating JPEG session feeds the browser (multipart),
- * the snapshot endpoint and the photo list. Recording video from the same
- * sensor would need a second MediaRecorder session; that limitation is reported
- * by the dashboard rather than hidden.
+ * One repeating session feeds the browser (multipart), snapshots and the photo
+ * list. Recording adds MediaRecorder's surface as a second target of the same
+ * session, which Camera2 allows for one JPEG and one PRIV stream, so the video
+ * is recorded with sound while the preview keeps running. MediaRecorder's own
+ * camera binding is deliberately not used: that is what ends the preview.
  */
 final class CameraController {
     static final String TAG = "GalaxyCamera";
@@ -62,6 +65,12 @@ final class CameraController {
     private CameraCaptureSession session;
     private CaptureRequest.Builder builder;
     private ImageReader reader;
+    private MediaRecorder recorder;
+    private File videoFile;
+    private long videoStarted;
+    private boolean videoAudio;
+    private volatile boolean recording;
+    private CountDownLatch sessionReady;
     private Size openSize;
     private String openId = "";
     private volatile byte[] latest;
@@ -194,7 +203,163 @@ final class CameraController {
     }
 
     synchronized void stop() {
+        if (recording) {
+            stopVideoQuietly();
+        }
         closeQuietly();
+    }
+
+    boolean recording() {
+        return recording;
+    }
+
+    JSONObject videoStatus() throws Exception {
+        JSONObject out = new JSONObject().put("recording", recording);
+        File current = videoFile;
+        if (current != null) {
+            out.put("file", current.getName());
+            out.put("bytes", current.length());
+            out.put("seconds", Math.max(0, (System.currentTimeMillis() - videoStarted) / 1000));
+        }
+        out.put("audio", videoAudio);
+        return out;
+    }
+
+    /**
+     * Records the same session the preview is using. Audio is optional because
+     * MediaRecorder cannot share the microphone with an AudioRecord capture.
+     */
+    synchronized JSONObject startVideo(boolean wantAudio) throws Exception {
+        if (recording) {
+            throw new DeviceApi.ApiError(409, "a video is already recording");
+        }
+        CameraDevice open = device;
+        CameraCaptureSession current = session;
+        if (open == null || current == null) {
+            throw new DeviceApi.ApiError(409, "start the preview before recording video");
+        }
+        File directory = new File(context.getFilesDir(), "videos");
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw new DeviceApi.ApiError(500, "cannot create the videos directory");
+        }
+        String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
+        File target = new File(directory, "vid-" + stamp + ".mp4");
+        boolean audio = wantAudio && prepareRecorder(target, true);
+        if (!audio && !prepareRecorder(target, false)) {
+            throw new DeviceApi.ApiError(503, "the encoder refused the video settings");
+        }
+        videoFile = target;
+        videoAudio = audio;
+        try {
+            current.stopRepeating();
+        } catch (Exception ignored) {
+        }
+        try {
+            current.close();
+        } catch (Exception ignored) {
+        }
+        session = null;
+        sessionReady = new CountDownLatch(1);
+        createSession(open, true);
+        boolean ready = sessionReady.await(8, TimeUnit.SECONDS) && recording;
+        if (!ready) {
+            stopVideoQuietly();
+            throw new DeviceApi.ApiError(503, "the camera refused to start recording");
+        }
+        videoStarted = System.currentTimeMillis();
+        return videoStatus();
+    }
+
+    synchronized JSONObject stopVideo() throws Exception {
+        File finished = videoFile;
+        long seconds = Math.max(0, (System.currentTimeMillis() - videoStarted) / 1000);
+        boolean audio = videoAudio;
+        stopVideoQuietly();
+        return new JSONObject().put("ok", true)
+                .put("file", finished == null ? "" : finished.getName())
+                .put("bytes", finished == null ? 0 : finished.length())
+                .put("seconds", seconds).put("audio", audio);
+    }
+
+    private boolean prepareRecorder(File target, boolean audio) {
+        MediaRecorder next = new MediaRecorder();
+        try {
+            next.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+            if (audio) {
+                next.setAudioSource(MediaRecorder.AudioSource.MIC);
+            }
+            next.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            next.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
+            if (audio) {
+                next.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+                next.setAudioChannels(1);
+                next.setAudioSamplingRate(44100);
+                next.setAudioEncodingBitRate(96000);
+            }
+            next.setVideoSize(1280, 720);
+            next.setVideoFrameRate(30);
+            next.setVideoEncodingBitRate(6_000_000);
+            next.setOutputFile(target.getAbsolutePath());
+            next.prepare();
+        } catch (Exception error) {
+            Log.w(TAG, "recorder refused audio=" + audio + ": " + error);
+            try {
+                next.release();
+            } catch (Exception ignored) {
+            }
+            return false;
+        }
+        MediaRecorder previous = recorder;
+        recorder = next;
+        if (previous != null && previous != next) {
+            try {
+                previous.release();
+            } catch (Exception ignored) {
+            }
+        }
+        return true;
+    }
+
+    private void stopVideoQuietly() {
+        recording = false;
+        CameraCaptureSession current = session;
+        if (current != null) {
+            try {
+                current.stopRepeating();
+            } catch (Exception ignored) {
+            }
+            try {
+                current.close();
+            } catch (Exception ignored) {
+            }
+            session = null;
+        }
+        MediaRecorder active = recorder;
+        recorder = null;
+        if (active != null) {
+            try {
+                active.stop();
+            } catch (RuntimeException error) {
+                // Less than a frame was captured; the file is still written.
+                Log.w(TAG, "recorder stopped early: " + error);
+            }
+            try {
+                active.release();
+            } catch (Exception ignored) {
+            }
+        }
+        videoFile = null;
+        videoAudio = false;
+        videoStarted = 0L;
+        CameraDevice open = device;
+        if (open != null) {
+            sessionReady = new CountDownLatch(1);
+            createSession(open, false);
+            try {
+                sessionReady.await(3, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+            }
+        }
     }
 
     private void openDevice(String id) {
@@ -242,7 +407,8 @@ final class CameraController {
                     openId = id;
                     latest = null;
                     frames = 0;
-                    createSession(opened);
+                    sessionReady = new CountDownLatch(1);
+                    createSession(opened, false);
                 }
 
                 @Override
@@ -269,36 +435,64 @@ final class CameraController {
         }
     }
 
-    private void createSession(CameraDevice opened) {
+    private void createSession(CameraDevice opened, boolean withRecorder) {
+        CountDownLatch ready = sessionReady;
         try {
-            Surface surface = reader.getSurface();
-            final CaptureRequest.Builder request =
-                    opened.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            request.addTarget(surface);
+            final List<Surface> targets = new ArrayList<>();
+            targets.add(reader.getSurface());
+            final MediaRecorder active = withRecorder ? recorder : null;
+            if (active != null) {
+                targets.add(active.getSurface());
+            }
+            final CaptureRequest.Builder request = opened.createCaptureRequest(
+                    withRecorder ? CameraDevice.TEMPLATE_RECORD : CameraDevice.TEMPLATE_PREVIEW);
+            for (Surface target : targets) {
+                request.addTarget(target);
+            }
             request.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
             request.set(CaptureRequest.JPEG_QUALITY, (byte) 80);
             builder = request;
-            opened.createCaptureSession(Collections.singletonList(surface),
+            opened.createCaptureSession(targets,
                     new CameraCaptureSession.StateCallback() {
                         @Override
-                        public void onConfigured(CameraCaptureSession ready) {
-                            session = ready;
+                        public void onConfigured(CameraCaptureSession configured) {
+                            session = configured;
                             try {
-                                ready.setRepeatingRequest(request.build(), null, handler);
-                            } catch (CameraAccessException error) {
-                                Log.w(TAG, "cannot start preview: " + error.getMessage());
+                                if (active != null) {
+                                    active.start();
+                                    recording = true;
+                                }
+                                configured.setRepeatingRequest(request.build(), null, handler);
+                            } catch (Exception error) {
+                                Log.w(TAG, "cannot start session: " + error.getMessage());
+                            } finally {
+                                finishSetup(ready);
                             }
                         }
 
                         @Override
                         public void onConfigureFailed(CameraCaptureSession failed) {
                             Log.w(TAG, "camera session failed");
-                            closeQuietly();
+                            finishSetup(ready);
+                            if (withRecorder) {
+                                stopVideoQuietly();
+                            } else {
+                                closeQuietly();
+                            }
                         }
                     }, handler);
-        } catch (CameraAccessException error) {
+        } catch (Exception error) {
             Log.w(TAG, "cannot create session: " + error.getMessage());
-            closeQuietly();
+            finishSetup(ready);
+            if (!withRecorder) {
+                closeQuietly();
+            }
+        }
+    }
+
+    private static void finishSetup(CountDownLatch ready) {
+        if (ready != null) {
+            ready.countDown();
         }
     }
 
@@ -370,10 +564,26 @@ final class CameraController {
             }
             reader = null;
         }
+        if (recorder != null) {
+            try {
+                recorder.stop();
+            } catch (Exception ignored) {
+            }
+            try {
+                recorder.release();
+            } catch (Exception ignored) {
+            }
+            recorder = null;
+        }
+        recording = false;
+        recorder = null;
         openId = "";
         openSize = null;
         builder = null;
         latest = null;
+        videoFile = null;
+        videoAudio = false;
+        videoStarted = 0L;
     }
 
     long lastFrameAt() {
