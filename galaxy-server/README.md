@@ -100,7 +100,7 @@ A browser reload reattaches to the shells the page had open, without asking for 
 
 ## Console and control API
 
-`/` is the public landing page. `/console` is the admin console: a signed-in single-page app with seven views — Overview, Metrics, Services, Networking, Logs, Terminal and Settings — reached through `/login` and left with `/logout`. Nginx serves the static landing page from `site/` and proxies `/console`, `/login`, `/logout` and `/api/*` to `status.py` on `127.0.0.1:8765`; nothing else is routed. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` behind the tunnel and expires after 12 hours, and every private endpoint re-checks it server-side, so a missing or expired cookie gets 401 instead of the page.
+`/` is the public landing page. `/console` is the admin console: a signed-in single-page app with eight views — Overview, Metrics, Services, Networking, Device, Logs, Terminal and Settings — reached through `/login` and left with `/logout`. Nginx serves the static landing page from `site/` and proxies `/console`, `/login`, `/logout` and `/api/*` to `status.py` on `127.0.0.1:8765`; nothing else is routed. The session cookie is `HttpOnly`, `SameSite=Lax`, `Secure` behind the tunnel and expires after 12 hours, and every private endpoint re-checks it server-side, so a missing or expired cookie gets 401 instead of the page.
 
 | Piece | Where |
 |---|---|
@@ -109,7 +109,7 @@ A browser reload reattaches to the shells the page had open, without asking for 
 | Status, charts, logs, actions | `status.py` on `127.0.0.1:8765` |
 | Password | `run/htpasswd`, `{SHA}` format, set with `~/galaxy-server/serverctl passwd` |
 
-Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET /api/telemetry`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`. `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
+Endpoints, all session-checked unless noted: `GET /api/status` (health, the five component indicators, KPIs, services, tunnel and probe state), `GET /api/timeline?range=1h|24h|7d`, `GET /api/logs?service=&severity=&q=&limit=`, `GET /api/events`, `GET /api/telemetry`, `GET`/`POST /api/settings`, `POST /api/action`, `POST /api/login`, `POST /api/logout`, and the device routes described below (`/api/device/*`). `GET /api/health` is loopback-only and refuses any request carrying nginx's proxy header, so it answers `serverctl status` and the supervisor and returns 404 to everyone else.
 
 `status.py` samples every 30 seconds into `run/galaxy.db`: raw samples are kept for 7 days and pruned, and the 24-hour and 7-day views aggregate those rows into 5- and 30-minute buckets in SQL. A bucket with no sample is returned as a gap, never as a zero, so the charts show missing data as missing. Health is computed server-side from memory, storage, battery, service states, tunnel readiness and the HTTPS probe, and returned as `health` plus `alerts`; values older than four sample intervals are marked stale and a component with no reading is reported as not monitored.
 
@@ -124,6 +124,17 @@ Per-service numbers come from `/proc/<pid>/status` (`VmRSS`) and `/proc/<pid>/st
 Stopping the server takes the console down with it, because Nginx serves the console. The way back is the phone: `~/galaxy-server/serverctl start`.
 
 Battery and temperature come from `termux-battery-status`, which needs both the Termux:API app and the `termux-api` package. Without them the cards report `n/a` and everything else still works. Android blocks `/proc/uptime`, `/proc/loadavg`, `/sys/class/power_supply` and `/sys/class/net` from a non-root app, so uptime comes from `CLOCK_BOOTTIME` and load average is not shown at all.
+
+## Device control
+
+The **Device** view drives a small companion app (`android/device-control`) that owns the camera, microphone, flashlight, vibration, brightness and speaker. Termux:API cannot do this: it exposes stills, file recording and vibration, but no camera preview, no live microphone and no brightness control.
+
+- The app listens on `127.0.0.1:8790` only and requires a pairing token. `status.py` stores that token in `run/device.json` (mode 0600) and proxies `/api/device/*` to it with the console session as the only gate, so the browser never holds the token and nothing on WiFi can reach the app directly.
+- Included: live JPEG preview with camera/size/rate selection, snapshots and a gallery, flashlight, vibration, brightness, per-stream volume, live microphone listening in the tab (Web Audio over a WAV/PCM stream), 16 kHz WAV recordings you can download, play on the phone or delete, media upload that plays on the phone speaker, battery, storage and sensor readouts.
+- Deliberately absent: camera video recording, because `MediaRecorder` needs the sensor for itself and would end the preview; and a live browser-to-phone audio channel, because the console does not capture the browser microphone. Phone-to-browser audio is live.
+- Actions are allowlisted (`torch`, `vibrate`, `brightness`, `volume`, camera start/stop/snapshot, record start/stop, media play/control/delete, photo/recording delete) and each one is written to the audit log as `device-<action>`.
+
+`DEVICE-CONTROL.md` has the hardware audit, every endpoint, and the Android restrictions behind each omission.
 
 ## Remote telemetry (Axiom)
 
