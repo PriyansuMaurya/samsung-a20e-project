@@ -12,6 +12,7 @@
     metrics: ['Metrics', 'CPU, memory, battery and storage over time.'],
     services: ['Services', 'Processes, restart counts and controls.'],
     networking: ['Networking', 'Hostnames, tunnel connector and access rules.'],
+    device: ['Device', 'Cameras, microphone, accessories and media on the phone.'],
     logs: ['Logs', 'Search the server log files.'],
     terminal: ['Terminal', 'Run commands as the Termux user.'],
     settings: ['Settings', 'Probe configuration, storage and audit trail.']
@@ -149,6 +150,14 @@
     if (route === 'logs') { loadLogs(); }
     if (route === 'settings') { loadSettings(); loadEvents(); loadTelemetry(); }
     if (route === 'services' || route === 'networking') { loadEvents(); }
+    if (route === 'device') {
+      loadDevice();
+    } else {
+      // Leaving the view releases the camera and the microphone, so the phone
+      // is not held open by a tab the operator forgot about.
+      if (deviceState.cameraOn) { stopCamera(true); }
+      if (deviceState.listening) { stopListening(); }
+    }
   }
 
   function routeFromHash() {
@@ -1166,6 +1175,545 @@
     }).then(function () { setRestoring(false); });
   }
 
+  // ------------------------------------------------------------------ device
+  var deviceState = {
+    summary: null, photos: [], recordings: [], media: [],
+    cameraOn: false, torch: false, listening: null, recordStarted: 0,
+    recordTimer: null, brightnessTimer: null
+  };
+
+  function deviceControl(action, payload) {
+    return api('/api/device/control', {
+      method: 'POST',
+      body: JSON.stringify({ action: action, payload: payload || {} })
+    });
+  }
+
+  function deviceBanner(kind, text, detail) {
+    var banner = $('#device-banner');
+    banner.dataset.state = kind;
+    $('#device-banner-text').textContent = text;
+    $('#device-banner-detail').textContent = detail || '';
+  }
+
+  function loadDevice() {
+    if (state.route !== 'device') { return; }
+    api('/api/device/summary').then(function (summary) {
+      deviceState.summary = summary;
+      if (!summary.paired) {
+        deviceBanner('warn', 'Control app not paired', 'Open the Galaxy Device app and pair.');
+        return;
+      }
+      if (summary.error) {
+        deviceBanner('crit', 'Control app unreachable', summary.error);
+        return;
+      }
+      var health = summary.health || {};
+      var camera = health.camera_open ? 'camera ' + health.camera_open : 'camera idle';
+      if (health.ok) {
+        deviceBanner('ok', 'Control app running',
+          (health.uptime_s || 0) + 's uptime · ' + camera);
+      } else {
+        deviceBanner('crit', 'Control app not answering', summary.error || '');
+        return;
+      }
+      renderCapabilities(summary.capabilities || {});
+      renderPower(summary);
+      renderVolume(summary.volume || {});
+      loadSensors();
+      loadPhotos();
+      loadRecordings();
+      loadMedia();
+    }).catch(function (error) {
+      deviceBanner('crit', 'Control app unreachable', error.message);
+    });
+  }
+
+  function renderCapabilities(caps) {
+    var select = $('#cam-id');
+    var previous = select.value;
+    select.textContent = '';
+    (caps.cameras || []).forEach(function (camera) {
+      select.appendChild(el('option', {
+        value: camera.id,
+        text: camera.facing + ' (id ' + camera.id + ')' + (camera.flash ? ' · flash' : '')
+      }));
+    });
+    if (!select.options.length) {
+      select.appendChild(el('option', { value: '0', text: 'no camera reported' }));
+    }
+    if (previous) { select.value = previous; }
+    renderCameraSizes(caps);
+
+    var brightness = $('#brightness');
+    if (typeof caps.brightness === 'number' && caps.brightness >= 0) {
+      brightness.value = caps.brightness;
+      $('#brightness-value').textContent = caps.brightness;
+    }
+    var perms = caps.permissions || {};
+    $('#dev-perms').textContent = (perms.camera ? 'camera' : 'no camera') + ' · ' +
+      (perms.microphone ? 'microphone' : 'no microphone') +
+      (caps.brightness_writable ? ' · brightness' : ' · brightness locked');
+  }
+
+  function renderCameraSizes(caps) {
+    var select = $('#cam-size');
+    var wanted = select.value;
+    select.textContent = '';
+    var picked = (caps.cameras || []).filter(function (camera) {
+      return camera.id === $('#cam-id').value;
+    })[0] || (caps.cameras || [])[0];
+    var sizes = (picked && picked.jpeg_sizes) || [];
+    select.appendChild(el('option', { value: '', text: 'auto (max 1080p)' }));
+    sizes.slice(0, 12).forEach(function (size) {
+      select.appendChild(el('option', { value: size, text: size }));
+    });
+    select.value = wanted && sizes.indexOf(wanted) >= 0 ? wanted : '';
+  }
+
+  function mb(value) {
+    if (typeof value !== 'number') { return '—'; }
+    return value >= 1024 * 1024 * 1024
+      ? (value / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+      : Math.round(value / (1024 * 1024)) + ' MB';
+  }
+
+  function renderPower(summary) {
+    var battery = summary.battery || {};
+    var storage = summary.storage || {};
+    var folders = storage.folders || {};
+    var health = summary.health || {};
+    $('#dev-battery').textContent = typeof battery.percentage === 'number'
+      ? battery.percentage + '% · ' + (battery.voltage_mv || '?') + ' mV' : '—';
+    $('#dev-charging').textContent = battery.plugged ? 'on the charger' : 'on battery';
+    $('#dev-temp').textContent = typeof battery.temperature_c === 'number'
+      ? battery.temperature_c.toFixed(1) + ' °C' : '—';
+    $('#dev-free').textContent = mb(storage.free_bytes) + ' free of ' + mb(storage.total_bytes);
+    $('#dev-photos').textContent = ((folders.photos || {}).count || 0) + ' · ' +
+      mb((folders.photos || {}).bytes || 0);
+    $('#dev-recordings').textContent = ((folders.recordings || {}).count || 0) + ' · ' +
+      mb((folders.recordings || {}).bytes || 0);
+    $('#dev-uptime').textContent = (health.uptime_s || 0) + 's';
+  }
+
+  var VOLUME_LABELS = {
+    music: 'Media', ring: 'Ring', alarm: 'Alarm',
+    notification: 'Notifications', call: 'Call'
+  };
+
+  function renderVolume(volume) {
+    var host = $('#volume-sliders');
+    var streams = volume.streams || {};
+    var names = Object.keys(streams);
+    if (!names.length) {
+      if (!host.children.length) {
+        host.appendChild(el('p', { class: 'empty', text: 'Volume is unavailable.' }));
+      }
+      return;
+    }
+    host.textContent = '';
+    names.forEach(function (name) {
+      var stream = streams[name];
+      var output = el('output', { text: stream.index + '/' + stream.max });
+      var input = el('input', {
+        type: 'range', min: '0', max: String(stream.max), step: '1',
+        value: String(stream.index),
+        'aria-label': (VOLUME_LABELS[name] || name) + ' volume'
+      });
+      input.addEventListener('input', function () {
+        output.textContent = input.value + '/' + stream.max;
+      });
+      input.addEventListener('change', function () {
+        deviceControl('volume', { stream: name, index: Number(input.value) })
+          .catch(function (error) { toast('Volume: ' + error.message, 'error'); });
+      });
+      host.appendChild(el('div', { class: 'slider-row' }, [
+        el('label', { text: VOLUME_LABELS[name] || name }), input, output
+      ]));
+    });
+  }
+
+  function renderSensors(payload) {
+    var body = $('#sensor-table').querySelector('tbody');
+    body.textContent = '';
+    var names = Object.keys(payload || {});
+    if (!names.length) {
+      body.appendChild(el('tr', {}, [el('td', { colspan: '2', class: 'empty',
+        text: 'No sensor answered.' })]));
+      return;
+    }
+    names.forEach(function (name) {
+      var sensor = payload[name] || {};
+      var values = (sensor.values || []).join(', ') || '—';
+      body.appendChild(el('tr', {}, [
+        el('td', {}, [el('strong', { text: name }),
+          el('span', { class: 'muted', text: ' ' + (sensor.name || '') })]),
+        el('td', { class: 'right mono', text: values })
+      ]));
+    });
+  }
+
+  function loadSensors() {
+    api('/api/device/sensors').then(renderSensors).catch(function () {
+      /* A slow sensor read is not worth a toast on every poll. */
+    });
+  }
+
+  function renderPhotos(files) {
+    deviceState.photos = files;
+    var grid = $('#photo-grid');
+    grid.textContent = '';
+    $('#photo-count').textContent = files.length ? files.length + ' stored' : '';
+    if (!files.length) {
+      grid.appendChild(el('p', { class: 'empty', text: 'No photos yet.' }));
+      return;
+    }
+    files.slice().sort(function (a, b) { return b.modified - a.modified; }).forEach(function (file) {
+      var figure = el('figure', {}, [
+        el('img', {
+          src: '/api/device/photo?file=' + encodeURIComponent(file.file),
+          alt: 'Photo ' + file.file, loading: 'lazy'
+        }),
+        el('figcaption', {}, [
+          el('span', { text: hhmm(file.modified / 1000) }),
+          el('button', {
+            class: 'btn small', type: 'button', text: 'Delete',
+            onclick: function () {
+              deviceControl('photo-delete', { file: file.file }).then(function () {
+                toast('Photo deleted');
+                loadPhotos();
+              }).catch(function (error) { toast(error.message, 'error'); });
+            }
+          })
+        ])
+      ]);
+      grid.appendChild(figure);
+    });
+  }
+
+  function loadPhotos() {
+    api('/api/device/photos').then(function (data) {
+      renderPhotos(data.files || []);
+    }).catch(function () { /* listed on the next refresh */ });
+  }
+
+  function renderRecordings(files) {
+    deviceState.recordings = files;
+    var body = $('#recordings-table').querySelector('tbody');
+    body.textContent = '';
+    if (!files.length) {
+      body.appendChild(el('tr', {}, [el('td', { colspan: '4', class: 'empty',
+        text: 'No recordings yet.' })]));
+      return;
+    }
+    files.slice().sort(function (a, b) { return b.modified - a.modified; }).forEach(function (file) {
+      body.appendChild(el('tr', {}, [
+        el('td', { class: 'mono', text: file.file }),
+        el('td', { class: 'right', text: mb(file.bytes) }),
+        el('td', { class: 'right', text: hhmm(file.modified / 1000) }),
+        el('td', { class: 'right' }, [
+          el('div', { class: 'btn-row tight' }, [
+            el('button', { class: 'btn small', type: 'button', text: 'Play',
+              onclick: function () {
+                deviceControl('recording-play', { file: file.file }).then(function () {
+                  toast('Playing ' + file.file + ' on the phone');
+                }).catch(function (error) { toast(error.message, 'error'); });
+              } }),
+            el('a', { class: 'btn small', href: '/api/device/recording?file=' +
+              encodeURIComponent(file.file), text: 'Download' }),
+            el('button', { class: 'btn small', type: 'button', text: 'Delete',
+              onclick: function () {
+                deviceControl('recording-delete', { file: file.file }).then(function () {
+                  toast('Recording deleted');
+                  loadRecordings();
+                }).catch(function (error) { toast(error.message, 'error'); });
+              } })
+          ])
+        ])
+      ]));
+    });
+  }
+
+  function loadRecordings() {
+    api('/api/device/recordings').then(function (data) {
+      renderRecordings(data.files || []);
+    }).catch(function () { /* listed on the next refresh */ });
+  }
+
+  function renderMedia(files) {
+    deviceState.media = files;
+    var body = $('#media-table').querySelector('tbody');
+    body.textContent = '';
+    if (!files.length) {
+      body.appendChild(el('tr', {}, [el('td', { colspan: '3', class: 'empty',
+        text: 'No uploaded media.' })]));
+      return;
+    }
+    files.forEach(function (file) {
+      body.appendChild(el('tr', {}, [
+        el('td', { class: 'mono', text: file.file }),
+        el('td', { class: 'right', text: mb(file.bytes) }),
+        el('td', { class: 'right' }, [
+          el('div', { class: 'btn-row tight' }, [
+            el('button', { class: 'btn small', type: 'button', text: 'Play',
+              onclick: function () {
+                deviceControl('media-play', { file: file.file }).then(function () {
+                  $('#media-note').textContent = 'Playing ' + file.file + ' on the phone';
+                  toast('Playing on the phone');
+                }).catch(function (error) { toast(error.message, 'error'); });
+              } }),
+            el('button', { class: 'btn small', type: 'button', text: 'Delete',
+              onclick: function () {
+                deviceControl('media-delete', { file: file.file }).then(function () {
+                  toast('File deleted');
+                  loadMedia();
+                }).catch(function (error) { toast(error.message, 'error'); });
+              } })
+          ])
+        ])
+      ]));
+    });
+  }
+
+  function loadMedia() {
+    api('/api/device/media').then(function (data) {
+      renderMedia(data.files || []);
+    }).catch(function () { /* listed on the next refresh */ });
+  }
+
+  function startCamera() {
+    var id = $('#cam-id').value || '0';
+    var size = $('#cam-size').value || '';
+    var fps = $('#cam-fps').value || '4';
+    var query = '?camera=' + encodeURIComponent(id) + '&fps=' + encodeURIComponent(fps) +
+      (size ? '&size=' + encodeURIComponent(size) : '') + '&t=' + Date.now();
+    var image = $('#cam-preview');
+    image.src = '/api/device/camera/stream' + query;
+    image.hidden = false;
+    $('#cam-placeholder').hidden = true;
+    $('#cam-live').hidden = false;
+    deviceState.cameraOn = true;
+  }
+
+  function stopCamera(silent) {
+    var image = $('#cam-preview');
+    image.hidden = true;
+    image.removeAttribute('src');
+    $('#cam-placeholder').hidden = false;
+    $('#cam-live').hidden = true;
+    deviceState.cameraOn = false;
+    deviceControl('camera-stop').catch(function () {
+      if (!silent) { toast('The camera may still be open', 'error'); }
+    });
+  }
+
+  function takeSnapshot() {
+    deviceControl('snapshot', {
+      camera: $('#cam-id').value || '0', size: $('#cam-size').value || ''
+    }).then(function (result) {
+      toast('Photo saved: ' + result.file + ' (' + Math.round(result.bytes / 1024) + ' kB)');
+      loadPhotos();
+    }).catch(function (error) { toast('Snapshot: ' + error.message, 'error'); });
+  }
+
+  function setTorch(on) {
+    deviceControl('torch', { on: on }).then(function () {
+      deviceState.torch = on;
+      var button = $('#torch-toggle');
+      button.textContent = on ? 'Turn off' : 'Turn on';
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+      $('#torch-state').textContent = on ? 'On' : 'Off';
+    }).catch(function (error) { toast('Flashlight: ' + error.message, 'error'); });
+  }
+
+  function startRecording() {
+    deviceControl('record-start').then(function (result) {
+      deviceState.recordStarted = Date.now();
+      $('#mic-record').textContent = 'Stop recording';
+      clearInterval(deviceState.recordTimer);
+      deviceState.recordTimer = setInterval(function () {
+        var seconds = Math.round((Date.now() - deviceState.recordStarted) / 1000);
+        $('#mic-timer').textContent = 'recording ' + seconds + 's · ' + result.file;
+      }, 500);
+      toast('Recording the microphone');
+    }).catch(function (error) { toast('Recording: ' + error.message, 'error'); });
+  }
+
+  function stopRecording() {
+    deviceControl('record-stop').then(function (result) {
+      clearInterval(deviceState.recordTimer);
+      deviceState.recordStarted = 0;
+      $('#mic-record').textContent = 'Start recording';
+      $('#mic-timer').textContent = result.file
+        ? 'saved ' + result.file + ' · ' + Math.round(result.bytes / 1024) + ' kB'
+        : 'not recording';
+      loadRecordings();
+    }).catch(function (error) { toast('Recording: ' + error.message, 'error'); });
+  }
+
+  function stopListening() {
+    var session = deviceState.listening;
+    deviceState.listening = null;
+    if (session) {
+      try { session.abort.abort(); } catch (error) { /* already closed */ }
+      try { session.context.close(); } catch (error) { /* already closed */ }
+    }
+    $('#mic-listen').textContent = 'Listen live';
+    $('#mic-live').hidden = true;
+  }
+
+  function startListening() {
+    if (deviceState.listening) { stopListening(); return; }
+    var AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      toast('This browser cannot decode raw audio', 'error');
+      return;
+    }
+    var context = new AudioContextClass();
+    var session = { context: context, abort: new AbortController(), header: 0, cursor: 0 };
+    deviceState.listening = session;
+    $('#mic-listen').textContent = 'Stop listening';
+    $('#mic-live').hidden = false;
+    // The phone sends a WAV header followed by endless 16-bit PCM. Web Audio
+    // needs the samples, not a media element, so the header is skipped once.
+    fetch('/api/device/audio/stream', { cache: 'no-store', signal: session.abort.signal })
+      .then(function (response) {
+        if (!response.ok || !response.body) { throw new Error('stream refused'); }
+        var reader = response.body.getReader();
+        function pump() {
+          return reader.read().then(function (result) {
+            if (result.done || deviceState.listening !== session) { return; }
+            var chunk = result.value;
+            if (session.header < 44) {
+              var skip = Math.min(44 - session.header, chunk.length);
+              session.header += skip;
+              chunk = chunk.subarray(skip);
+              if (!chunk.length) { return pump(); }
+            }
+            var count = chunk.length >> 1;
+            var samples = new Float32Array(count);
+            var view = new DataView(chunk.buffer, chunk.byteOffset, count * 2);
+            for (var index = 0; index < count; index++) {
+              samples[index] = view.getInt16(index * 2, true) / 32768;
+            }
+            var buffer = context.createBuffer(1, count, 16000);
+            buffer.copyToChannel(samples, 0);
+            var source = context.createBufferSource();
+            source.buffer = buffer;
+            source.connect(context.destination);
+            var at = Math.max(context.currentTime + 0.08, session.cursor);
+            source.start(at);
+            session.cursor = at + buffer.duration;
+            return pump();
+          });
+        }
+        return pump();
+      }).catch(function (error) {
+        if (error.name !== 'AbortError') { toast('Microphone: ' + error.message, 'error'); }
+      }).finally(function () {
+        if (deviceState.listening === session) { stopListening(); }
+      });
+  }
+
+  function uploadMedia(file) {
+    var name = file.name.replace(/[^A-Za-z0-9._-]/g, '_');
+    $('#media-note').textContent = 'Uploading ' + name + '…';
+    fetch('/api/device/media/upload', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'X-Filename': name }, body: file
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) {
+        if (!response.ok) { throw new Error(data.error || 'upload failed'); }
+        return data;
+      });
+    }).then(function (data) {
+      $('#media-note').textContent = 'Uploaded ' + data.file;
+      toast('Uploaded to the phone');
+      loadMedia();
+    }).catch(function (error) {
+      $('#media-note').textContent = 'Upload failed';
+      toast('Upload: ' + error.message, 'error');
+    });
+  }
+
+  function wireDevice() {
+    $('#device-pair-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+      var button = $('#device-pair-form button[type="submit"]');
+      button.disabled = true;
+      api('/api/device/pair', { method: 'POST', body: JSON.stringify({}) })
+        .then(function () {
+          toast('Phone app paired');
+          loadDevice();
+        }).catch(function (error) {
+          toast(error.message, 'error');
+        }).finally(function () { button.disabled = false; });
+    });
+    $('#device-unpair').addEventListener('click', function () {
+      api('/api/device/unpair', { method: 'POST', body: JSON.stringify({}) })
+        .then(function () { toast('Pairing forgotten'); loadDevice(); })
+        .catch(function (error) { toast(error.message, 'error'); });
+    });
+    $('#cam-id').addEventListener('change', function () {
+      renderCameraSizes((deviceState.summary || {}).capabilities || {});
+      if (deviceState.cameraOn) { startCamera(); }
+    });
+    $('#cam-size').addEventListener('change', function () {
+      if (deviceState.cameraOn) { startCamera(); }
+    });
+    $('#cam-fps').addEventListener('change', function () {
+      if (deviceState.cameraOn) { startCamera(); }
+    });
+    $('#cam-start').addEventListener('click', startCamera);
+    $('#cam-stop').addEventListener('click', function () { stopCamera(false); });
+    $('#cam-snapshot').addEventListener('click', takeSnapshot);
+    $('#torch-toggle').addEventListener('click', function () {
+      setTorch(!deviceState.torch);
+    });
+    $$('[data-vibrate]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        deviceControl('vibrate', { ms: Number(button.dataset.vibrate) })
+          .then(function () { toast('Phone vibrated'); })
+          .catch(function (error) { toast('Vibration: ' + error.message, 'error'); });
+      });
+    });
+    $('#brightness').addEventListener('input', function () {
+      $('#brightness-value').textContent = this.value;
+    });
+    $('#brightness').addEventListener('change', function () {
+      var value = Number(this.value);
+      clearTimeout(deviceState.brightnessTimer);
+      deviceState.brightnessTimer = setTimeout(function () {
+        deviceControl('brightness', { value: value })
+          .catch(function (error) { toast('Brightness: ' + error.message, 'error'); });
+      }, 250);
+    });
+    $('#mic-listen').addEventListener('click', startListening);
+    $('#mic-record').addEventListener('click', function () {
+      if (deviceState.recordStarted) { stopRecording(); } else { startRecording(); }
+    });
+    $('#media-file').addEventListener('change', function () {
+      var file = this.files && this.files[0];
+      this.value = '';
+      if (file) { uploadMedia(file); }
+    });
+    $('#media-refresh').addEventListener('click', loadMedia);
+    $('#media-pause').addEventListener('click', function () {
+      deviceControl('media-control', { action: 'pause' })
+        .then(function (r) { $('#media-note').textContent = r.playing ? 'Paused ' + r.playing : 'Nothing playing'; })
+        .catch(function (error) { toast(error.message, 'error'); });
+    });
+    $('#media-resume').addEventListener('click', function () {
+      deviceControl('media-control', { action: 'resume' })
+        .catch(function (error) { toast(error.message, 'error'); });
+    });
+    $('#media-stop').addEventListener('click', function () {
+      deviceControl('media-control', { action: 'stop' })
+        .then(function () { $('#media-note').textContent = 'Nothing playing'; })
+        .catch(function (error) { toast(error.message, 'error'); });
+    });
+  }
+
   // ------------------------------------------------------------------ data
   function loadTimeline(range) {
     return api('/api/timeline?range=' + encodeURIComponent(range)).then(function (data) {
@@ -1212,6 +1760,11 @@
 
   // ------------------------------------------------------------------- init
   function wire() {
+    wireDevice();
+    window.addEventListener('pagehide', function () {
+      if (deviceState.cameraOn) { stopCamera(true); }
+      if (deviceState.listening) { stopListening(); }
+    });
     window.addEventListener('hashchange', function () { show(routeFromHash()); });
     $('#menu').addEventListener('click', function () {
       if ($('#sidebar').classList.contains('open')) { closeDrawer(); } else { openDrawer(); }
@@ -1363,6 +1916,11 @@
     state.statusTimer = setInterval(function () {
       if (document.visibilityState === 'visible') { refreshStatus(); }
     }, 10000);
+    setInterval(function () {
+      if (document.visibilityState === 'visible' && state.route === 'device') {
+        loadDevice();
+      }
+    }, 15000);
     setInterval(function () {
       if (document.visibilityState === 'visible' && state.route !== 'logs') { loadTimeline(state.range); }
     }, 60000);

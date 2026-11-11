@@ -215,3 +215,118 @@ test('settings renders the remote telemetry card from the API', async () => {
     await browser.close();
   }
 });
+
+test('device view drives the app through the proxy', async () => {
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const calls = [];
+    await page.route('http://console.test/**', async route => {
+      const url = new URL(route.request().url());
+      const reply = data => route.fulfill({ json: data });
+      if (url.pathname.startsWith('/api/')) {
+        calls.push({ path: url.pathname, body: route.request().postDataJSON() });
+        if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
+        if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
+        if (url.pathname === '/api/events') { return reply({ audits: [] }); }
+        if (url.pathname === '/api/timeline') { return reply({ points: [], events: [] }); }
+        if (url.pathname === '/api/device/summary') {
+          return reply({
+            paired: true,
+            health: { ok: true, uptime_s: 120, camera_open: '' },
+            capabilities: {
+              model: 'SM-A202F', android: '11',
+              permissions: { camera: true, microphone: true },
+              brightness: 120, brightness_writable: true,
+              cameras: [
+                { id: '0', facing: 'back', flash: true, jpeg_sizes: ['1920x1080', '1280x720'] },
+                { id: '1', facing: 'front', flash: false, jpeg_sizes: ['1280x720'] }
+              ]
+            },
+            battery: { percentage: 74, plugged: false, temperature_c: 28.4, voltage_mv: 4100 },
+            storage: { free_bytes: 5 * 1024 * 1024 * 1024, total_bytes: 23 * 1024 * 1024 * 1024,
+              folders: { photos: { count: 1, bytes: 1024 }, recordings: { count: 1, bytes: 2048 } } },
+            volume: { streams: { music: { index: 9, max: 15 }, alarm: { index: 15, max: 15 } } }
+          });
+        }
+        if (url.pathname === '/api/device/sensors') {
+          return reply({ accelerometer: { values: [0.1, 0.2, 9.8], name: 'LSM6DSL' } });
+        }
+        if (url.pathname === '/api/device/photos') {
+          return reply({ files: [{ file: 'cam0-1.jpg', bytes: 2048, modified: 1700000000000 }] });
+        }
+        if (url.pathname === '/api/device/recordings') {
+          return reply({ files: [{ file: 'mic-1.wav', bytes: 4096, modified: 1700000000000 }] });
+        }
+        if (url.pathname === '/api/device/media') {
+          return reply({ files: [{ file: 'tone.wav', bytes: 32044, modified: 1700000000000 }] });
+        }
+        if (url.pathname === '/api/device/control') {
+          const action = (route.request().postDataJSON() || {}).action;
+          if (action === 'snapshot') { return reply({ ok: true, file: 'cam0-2.jpg', bytes: 4096, size: '1920x1080' }); }
+          if (action === 'record-stop') { return reply({ ok: true, file: 'mic-2.wav', bytes: 8192, seconds: 4 }); }
+          return reply({ ok: true });
+        }
+        return reply({});
+      }
+      const file = url.pathname === '/console' ? 'console.html' : url.pathname.slice(1);
+      const body = await readFile(path.join(__dirname, 'site', file));
+      return route.fulfill({ body, contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
+    });
+
+    await page.goto('http://console.test/console#/device');
+    await page.locator('#view-device').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('#device-banner-text').textContent === 'Control app running');
+    assert.match(await page.locator('#device-banner-detail').textContent(), /camera idle/);
+    assert.equal(await page.locator('#dev-battery').textContent(), '74% · 4100 mV');
+    assert.equal(await page.locator('#cam-id option').count(), 2);
+    assert.equal(await page.locator('#sensor-table tbody tr').count(), 1);
+    assert.match(await page.locator('#sensor-table tbody').textContent(), /0.1, 0.2, 9.8/);
+    assert.equal(await page.locator('#photo-grid figure').count(), 1);
+    assert.equal(await page.locator('#recordings-table tbody tr').count(), 1);
+    assert.equal(await page.locator('#media-table tbody tr').count(), 1);
+    assert.equal(await page.locator('#volume-sliders .slider-row').count(), 2);
+
+    // Accessories go through the allowlisted proxy action, not a raw endpoint.
+    await page.locator('#torch-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#torch-state').textContent === 'On');
+    await page.locator('[data-vibrate="400"]').click();
+    await page.locator('#brightness').fill('200');
+    await page.evaluate(() => {
+      const input = document.querySelector('#brightness');
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(() => true);
+    await page.waitForTimeout(400);
+
+    // Preview uses the stream endpoint and starts/stops with navigation.
+    await page.locator('#cam-start').click();
+    const source = await page.locator('#cam-preview').getAttribute('src');
+    assert.match(source, /^\/api\/device\/camera\/stream\?camera=0&fps=4/);
+    await page.locator('[data-route="overview"]').click();
+    await page.waitForFunction(() => document.querySelector('#cam-preview').hasAttribute('src') === false);
+
+    await page.locator('[data-route="device"]').click();
+    await page.locator('#cam-snapshot').click();
+    await page.locator('#mic-record').click();
+    await page.waitForFunction(() => document.querySelector('#mic-record').textContent === 'Stop recording');
+    await page.locator('#mic-record').click();
+    await page.waitForFunction(() => /saved mic-2.wav/.test(document.querySelector('#mic-timer').textContent));
+
+    const torch = calls.filter(call => call.path === '/api/device/control' && call.body.action === 'torch');
+    assert.deepEqual(torch.map(call => call.body.payload.on), [true]);
+    const vibrate = calls.filter(call => call.body && call.body.action === 'vibrate');
+    assert.deepEqual(vibrate.map(call => call.body.payload.ms), [400]);
+    const brightness = calls.filter(call => call.body && call.body.action === 'brightness');
+    assert.deepEqual(brightness.map(call => call.body.payload.value), [200]);
+    const stop = calls.filter(call => call.body && call.body.action === 'camera-stop');
+    assert.ok(stop.length >= 1);
+    const snapshot = calls.filter(call => call.body && call.body.action === 'snapshot');
+    assert.equal(snapshot[0].body.payload.camera, '0');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
