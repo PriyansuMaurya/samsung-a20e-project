@@ -20,6 +20,7 @@ import base64
 from contextlib import contextmanager
 import hashlib
 import hmac
+import http.client
 import http.server
 import json
 import os
@@ -48,6 +49,7 @@ SITE_DIR = os.path.join(BASE, 'site')
 PRIV_DIR = os.path.join(BASE, 'priv')
 DB_PATH = os.path.join(RUN_DIR, 'galaxy.db')
 SETTINGS_PATH = os.path.join(RUN_DIR, 'settings.json')
+DEVICE_PATH = os.path.join(RUN_DIR, 'device.json')
 PASSFILE = os.path.join(RUN_DIR, 'htpasswd')
 TERMINAL_PASSFILE = os.path.join(RUN_DIR, 'terminal.passwd')
 SERVERCTL = os.path.join(BASE, 'serverctl')
@@ -258,6 +260,109 @@ def write_settings(values):
     with open(temp, 'w') as handle:
         json.dump(values, handle)
     os.replace(temp, SETTINGS_PATH)
+
+
+# --------------------------------------------------------------------------- #
+# device control app (127.0.0.1:8790)
+# --------------------------------------------------------------------------- #
+
+DEVICE_DEFAULT_PORT = 8790
+
+# Only these controls exist, so a compromised console session cannot ask the
+# app for anything the UI never offers.
+DEVICE_CONTROLS = {
+    'torch': ('POST', '/torch'),
+    'vibrate': ('POST', '/vibrate'),
+    'brightness': ('POST', '/brightness'),
+    'volume': ('POST', '/volume'),
+    'camera-start': ('POST', '/camera/start'),
+    'camera-stop': ('POST', '/camera/stop'),
+    'snapshot': ('GET', '/camera/snapshot'),
+    'record-start': ('POST', '/audio/record/start'),
+    'record-stop': ('POST', '/audio/record/stop'),
+    'media-play': ('POST', '/media/play'),
+    'media-control': ('POST', '/media/control'),
+    'media-delete': ('POST', '/media/delete'),
+    'photo-delete': ('POST', '/photo/delete'),
+    'recording-play': ('POST', '/recording/play'),
+    'recording-delete': ('POST', '/recording/delete'),
+}
+
+DEVICE_READS = {
+    '/api/device/capabilities': '/capabilities',
+    '/api/device/battery': '/battery',
+    '/api/device/storage': '/storage',
+    '/api/device/sensors': '/sensors',
+    '/api/device/volume': '/volume',
+    '/api/device/photos': '/photos',
+    '/api/device/recordings': '/recordings',
+    '/api/device/media': '/media/list',
+    '/api/device/audio': '/audio/status',
+}
+
+DEVICE_STREAMS = {
+    '/api/device/camera/stream': '/camera/stream',
+    '/api/device/audio/stream': '/audio/stream',
+    '/api/device/photo': '/photo',
+    '/api/device/recording': '/recording',
+    '/api/device/media/get': '/media/get',
+}
+
+
+def read_device():
+    try:
+        with open(DEVICE_PATH, encoding='utf-8') as handle:
+            stored = json.load(handle)
+    except (OSError, ValueError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    return {'token': str(stored.get('token') or ''),
+            'port': int(stored.get('port') or DEVICE_DEFAULT_PORT)}
+
+
+def write_device(values):
+    os.makedirs(RUN_DIR, exist_ok=True)
+    temp = DEVICE_PATH + '.tmp'
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(values, handle)
+        os.replace(temp, DEVICE_PATH)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def device_call(path, payload=None, method=None, timeout=12):
+    """One request to the control app. Returns (status, decoded json)."""
+    config = read_device()
+    body = None
+    headers = {'X-Galaxy-Token': config['token']}
+    if payload is not None:
+        body = json.dumps(payload).encode()
+        headers['Content-Type'] = 'application/json'
+        method = method or 'POST'
+    connection = http.client.HTTPConnection('127.0.0.1', config['port'], timeout=timeout)
+    try:
+        connection.request(method or 'GET', path, body=body, headers=headers)
+        response = connection.getresponse()
+        raw = response.read()
+        try:
+            return response.status, json.loads(raw.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            return response.status, {'error': 'unreadable response from the device app'}
+    finally:
+        connection.close()
+
+
+def device_path(base, query):
+    pairs = []
+    for key in ('camera', 'size', 'fps', 'file'):
+        value = (query.get(key) or [''])[0]
+        if value:
+            pairs.append(quote(key, safe='') + '=' + quote(value, safe=''))
+    return base + ('?' + '&'.join(pairs) if pairs else '')
 
 
 # --------------------------------------------------------------------------- #
@@ -1437,7 +1542,95 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     terminal['stream'] = None
                     terminal['detached_at'] = time.monotonic()
 
+    def _device_unavailable(self, message):
+        self._json(503, {'error': message, 'paired': bool(read_device()['token'])})
+
+    def _device_get(self, path, query):
+        config = read_device()
+        if path == '/api/device/summary':
+            if not config['token']:
+                self._json(200, {'paired': False,
+                                 'error': 'The phone app is not paired yet'})
+                return
+            try:
+                _status, health = device_call('/health', timeout=4)
+            except (OSError, http.client.HTTPException):
+                self._device_unavailable('The control app is not running on the phone')
+                return
+            payload = {'paired': True, 'health': health}
+            for key, route in (('capabilities', '/capabilities'), ('battery', '/battery'),
+                               ('storage', '/storage'), ('volume', '/volume')):
+                try:
+                    _status, data = device_call(route, timeout=8)
+                except (OSError, http.client.HTTPException):
+                    data = {'error': 'unavailable'}
+                payload[key] = data
+            self._json(200, payload)
+            return
+        if not config['token']:
+            self._device_unavailable('The phone app is not paired yet')
+            return
+        if path in DEVICE_STREAMS:
+            self._device_stream(DEVICE_STREAMS[path], query)
+            return
+        route = DEVICE_READS.get(path)
+        if not route:
+            self._json(404, {'error': 'not found'})
+            return
+        try:
+            status, data = device_call(route, timeout=15)
+        except (OSError, http.client.HTTPException):
+            self._device_unavailable('The control app is not running on the phone')
+            return
+        self._json(status, data)
+
+    def _device_stream(self, route, query):
+        # MJPEG and PCM are pushed straight through: buffering would add the
+        # whole tunnel round trip to every frame.
+        config = read_device()
+        target = device_path(route, query)
+        try:
+            connection = http.client.HTTPConnection('127.0.0.1', config['port'], timeout=None)
+            connection.request('GET', target, headers={'X-Galaxy-Token': config['token']})
+            response = connection.getresponse()
+        except (OSError, http.client.HTTPException):
+            self._device_unavailable('The control app is not running on the phone')
+            return
+        if response.status != 200:
+            raw = response.read()
+            connection.close()
+            try:
+                self._json(response.status, json.loads(raw.decode('utf-8')))
+            except (ValueError, UnicodeDecodeError):
+                self._json(502, {'error': 'The device app refused the stream'})
+            return
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header('Content-Type', response.getheader('Content-Type')
+                         or 'application/octet-stream')
+        self.send_header('Cache-Control', 'no-store, must-revalidate')
+        self.send_header('X-Accel-Buffering', 'no')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        try:
+            while True:
+                chunk = response.read(16384)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            try:
+                connection.close()
+            except OSError:
+                pass
+
     def _api_get(self, path, query):
+        if path.startswith('/api/device/'):
+            self._device_get(path, query)
+            return
         if path == '/api/terminal/stream':
             self._stream_terminal(query)
             return
@@ -1517,6 +1710,96 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self._json(404, {'error': 'not found'})
 
+    def _device_pair(self, user):
+        data = self._body(2048)
+        if data is None:
+            return
+        token = str(data.get('token') or '').strip() or secrets.token_hex(24)
+        if not 16 <= len(token) <= 128:
+            self._json(400, {'error': 'Pairing token must be 16 to 128 characters'})
+            return
+        config = read_device()
+        try:
+            _status, result = device_call('/pair', {'token': token}, timeout=8)
+        except (OSError, http.client.HTTPException):
+            self._device_unavailable('The control app is not running on the phone')
+            return
+        if result.get('paired') is not True:
+            add_audit(user, 'device-pair', 'failed', str(result.get('error') or 'refused'))
+            self._json(400, {'error': result.get('error')
+                             or 'Open the pairing window in the Galaxy Device app first'})
+            return
+        write_device({'token': token, 'port': config['port']})
+        add_audit(user, 'device-pair', 'ok', 'control app paired')
+        self._json(200, {'ok': True, 'paired': True})
+
+    def _device_control(self, user):
+        data = self._body(8192)
+        if data is None:
+            return
+        action = data.get('action')
+        spec = DEVICE_CONTROLS.get(action) if isinstance(action, str) else None
+        if not spec:
+            self._json(400, {'error': 'unknown device action'})
+            return
+        payload = data.get('payload')
+        if not isinstance(payload, dict):
+            payload = {}
+        method, route = spec
+        try:
+            if method == 'GET':
+                query = {key: [str(value)] for key, value in payload.items()}
+                status, result = device_call(device_path(route, query), timeout=30)
+            else:
+                status, result = device_call(route, payload, timeout=30)
+        except (OSError, http.client.HTTPException):
+            self._device_unavailable('The control app is not running on the phone')
+            return
+        detail = str(result.get('error') or result.get('file') or result.get('size') or '')
+        add_audit(user, 'device-' + action, 'ok' if status == 200 else 'failed', detail[:160])
+        self._json(status, result)
+
+    def _device_upload(self, user):
+        if not same_origin(self):
+            self._json(403, {'error': 'cross-origin request refused'})
+            return
+        name = (self.headers.get('X-Filename') or '').strip()
+        if not name or len(name) > 120 or '/' in name or '\\' in name or name.startswith('.'):
+            self._json(400, {'error': 'X-Filename header is required'})
+            return
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = 0
+        if not 0 < length <= 8 * 1024 * 1024:
+            self._json(413, {'error': 'File must be smaller than 8 MB'})
+            return
+        body = self.rfile.read(length)
+        config = read_device()
+        if not config['token']:
+            self._device_unavailable('The phone app is not paired yet')
+            return
+        connection = http.client.HTTPConnection('127.0.0.1', config['port'], timeout=30)
+        try:
+            connection.request('POST', '/media/upload', body=body,
+                               headers={'X-Galaxy-Token': config['token'],
+                                        'X-Filename': name,
+                                        'Content-Type': 'application/octet-stream'})
+            response = connection.getresponse()
+            raw = response.read()
+            status = response.status
+        except (OSError, http.client.HTTPException):
+            self._device_unavailable('The control app is not running on the phone')
+            return
+        finally:
+            connection.close()
+        try:
+            result = json.loads(raw.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            result = {'error': 'unreadable response from the device app'}
+        add_audit(user, 'device-upload', 'ok' if status == 200 else 'failed', name)
+        self._json(status, result)
+
     def _body(self, limit=8192):
         if not same_origin(self):
             self._json(403, {'error': 'cross-origin request refused'})
@@ -1582,6 +1865,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(202, {'status': 'deployment queued'})
             else:
                 self._json(200, {'status': 'ignored'})
+            return
+        if path.startswith('/api/device/'):
+            user = self._private()
+            if not user:
+                return
+            if path == '/api/device/pair':
+                self._device_pair(user)
+                return
+            if path == '/api/device/unpair':
+                write_device({'token': '', 'port': read_device()['port']})
+                add_audit(user, 'device-pair', 'forgotten', 'dashboard unpaired')
+                self._json(200, {'ok': True, 'paired': False})
+                return
+            if path == '/api/device/control':
+                self._device_control(user)
+                return
+            if path == '/api/device/media/upload':
+                self._device_upload(user)
+                return
+            self._json(404, {'error': 'not found'})
             return
         client = (self.headers.get('CF-Connecting-IP') or self.headers.get('X-Real-IP')
                   or self.client_address[0])
