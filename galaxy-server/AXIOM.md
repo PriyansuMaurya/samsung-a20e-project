@@ -124,7 +124,7 @@ All events are NDJSON objects with `_time` (UTC, ISO 8601), `event`, `source`
 | `galaxy.event` | `kind` (`restart`, `down`, `reboot`, `tunnel-up`, `tunnel-down`, `admin`), `detail`, `service` |
 | `galaxy.check` | `host`, `ok`, `status`, `ms`, `error` |
 | `galaxy.audit` | `user`, `action`, `outcome`, `detail`; one per console action, from the `audits` table |
-| `galaxy.health` | `health` (`ok`/`warn`/`crit`), `alerts`; emitted on change plus a 5 min heartbeat |
+| `galaxy.health` | `health` (`ok`/`warn`/`crit`), `alerts`; emitted by the sampler on change plus a 5 min heartbeat, so a phone nobody is watching still reports trouble |
 
 ### History catch-up and release logs
 
@@ -159,7 +159,8 @@ the sample path; that result is `galaxy.check` per host.
   retryable failure, `dropped` oldest-queue evictions. A spool that cannot
   drain, like a queue that cannot send, sets `last_error` and makes `state`
   `degraded`; it is never reported as `ok`. `bytes_sent` totals the NDJSON
-  bodies posted, including refused ones.
+  bodies posted, including refused ones, and `spool_drained` counts events
+  delivered from the disk spool after an outage.
 - The queue drops the oldest event when full and counts the loss. The spool
   trims the oldest lines over its cap. Both are bounded by design on a 3 GB
   phone.

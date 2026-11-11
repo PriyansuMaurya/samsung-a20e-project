@@ -675,6 +675,11 @@ def sampler():
         try:
             sample = sample_once()
             _emit_sample(sample)
+            running = {key: bool(sample['pids'].get(key)) for key, _label, _needle in SERVICES}
+            running['status'] = True  # this process is the status API
+            TELEMETRY.emit_health(*health_state(
+                sample['now'], sample['mem'], sample['disk'], sample['batt'],
+                sample['tunnel'], running, time.time() - sample['now']))
             STATE['tick'] += 1
             if STATE['tick'] % 4 == 3 and read_settings().get('host_probes'):
                 for host in HOSTNAMES:
@@ -739,6 +744,56 @@ def _services_read():
     return result
 
 
+def health_state(now, mem, disk, batt, tun, running, sample_age, https_state='unknown'):
+    """The alert rules, shared by the console payload and the exported health.
+
+    A health event used to be produced only while somebody had the console
+    open, which meant an unobserved phone exported samples but never said it
+    was in trouble. The sampler calls this with the data it already collected.
+    """
+    alerts = []
+    if not running.get('nginx'):
+        alerts.append({'level': 'crit', 'text': 'nginx is not running, the site is unreachable'})
+    if not running.get('status'):
+        alerts.append({'level': 'crit', 'text': 'status API is not running, this console has no data'})
+    if not running.get('supervisor'):
+        alerts.append({'level': 'warn', 'text': 'supervisor is not running, nothing will restore the server'})
+    if tun['disabled']:
+        alerts.append({'level': 'warn', 'text': 'tunnel is stopped, the public URL is offline'})
+    elif not tun['ready']:
+        alerts.append({'level': 'crit', 'text': 'tunnel connector is not ready, the public URL is offline'})
+    # cloudflared's error counter is cumulative, so only a recent increase is
+    # worth a health warning; a stale count would keep the console degraded.
+    errors = tun.get('errors')
+    if errors is not None:
+        previous_errors = STATE.get('last_errors')
+        if previous_errors is None:
+            STATE['last_errors'] = errors
+            STATE['last_errors_at'] = 0
+        elif previous_errors != errors:
+            STATE['last_errors'] = errors
+            STATE['last_errors_at'] = now
+        if errors and now - (STATE.get('last_errors_at') or 0) < 300:
+            alerts.append({'level': 'warn',
+                           'text': 'tunnel reported %d request error%s in the last 5 minutes'
+                                   % (errors, '' if errors == 1 else 's')})
+    if mem and mem['used_percent'] >= 90:
+        alerts.append({'level': 'crit', 'text': 'memory at %d%%, Android may kill Termux' % mem['used_percent']})
+    elif mem and mem['used_percent'] >= 80:
+        alerts.append({'level': 'warn', 'text': 'memory at %d%%' % mem['used_percent']})
+    if disk and disk['used_percent'] >= 90:
+        alerts.append({'level': 'crit', 'text': 'storage %d%% full' % disk['used_percent']})
+    if batt and batt.get('percent') is not None and batt['percent'] <= 15 and not batt.get('charging'):
+        alerts.append({'level': 'warn', 'text': 'battery at %d%% and discharging' % batt['percent']})
+    if sample_age is not None and sample_age > SAMPLE_SECONDS * 4:
+        alerts.append({'level': 'warn', 'text': 'metrics are %ds old, the sampler may be stalled' % sample_age})
+    if https_state == 'crit':
+        alerts.append({'level': 'crit', 'text': 'public HTTPS check is failing'})
+    health = 'crit' if any(a['level'] == 'crit' for a in alerts) else (
+        'warn' if alerts else 'ok')
+    return health, alerts
+
+
 def live_payload():
     now = int(time.time())
     boottime = _boottime()
@@ -799,46 +854,8 @@ def live_payload():
                            'detail': 'Not monitored: no external probe configured',
                            'at': None}
 
-    alerts = []
-    if not running.get('nginx'):
-        alerts.append({'level': 'crit', 'text': 'nginx is not running, the site is unreachable'})
-    if not running.get('status'):
-        alerts.append({'level': 'crit', 'text': 'status API is not running, this console has no data'})
-    if not running.get('supervisor'):
-        alerts.append({'level': 'warn', 'text': 'supervisor is not running, nothing will restore the server'})
-    if tun['disabled']:
-        alerts.append({'level': 'warn', 'text': 'tunnel is stopped, the public URL is offline'})
-    elif not tun['ready']:
-        alerts.append({'level': 'crit', 'text': 'tunnel connector is not ready, the public URL is offline'})
-    # cloudflared's error counter is cumulative, so only a recent increase is
-    # worth a health warning; a stale count would keep the console degraded.
-    errors = tun.get('errors')
-    if errors is not None:
-        previous_errors = STATE.get('last_errors')
-        if previous_errors is None:
-            STATE['last_errors'] = errors
-            STATE['last_errors_at'] = 0
-        elif previous_errors != errors:
-            STATE['last_errors'] = errors
-            STATE['last_errors_at'] = now
-        if errors and now - (STATE.get('last_errors_at') or 0) < 300:
-            alerts.append({'level': 'warn',
-                           'text': 'tunnel reported %d request error%s in the last 5 minutes'
-                                   % (errors, '' if errors == 1 else 's')})
-    if mem and mem['used_percent'] >= 90:
-        alerts.append({'level': 'crit', 'text': 'memory at %d%%, Android may kill Termux' % mem['used_percent']})
-    elif mem and mem['used_percent'] >= 80:
-        alerts.append({'level': 'warn', 'text': 'memory at %d%%' % mem['used_percent']})
-    if disk and disk['used_percent'] >= 90:
-        alerts.append({'level': 'crit', 'text': 'storage %d%% full' % disk['used_percent']})
-    if batt and batt.get('percent') is not None and batt['percent'] <= 15 and not batt.get('charging'):
-        alerts.append({'level': 'warn', 'text': 'battery at %d%% and discharging' % batt['percent']})
-    if stale:
-        alerts.append({'level': 'warn', 'text': 'metrics are %ds old, the sampler may be stalled' % sample_age})
-    if components['https']['state'] == 'crit':
-        alerts.append({'level': 'crit', 'text': 'public HTTPS check is failing'})
-    health = 'crit' if any(a['level'] == 'crit' for a in alerts) else (
-        'warn' if alerts else 'ok')
+    health, alerts = health_state(now, mem, disk, batt, tun, running, sample_age,
+                                  components['https']['state'])
     TELEMETRY.emit_health(health, alerts)
 
     cpu = None

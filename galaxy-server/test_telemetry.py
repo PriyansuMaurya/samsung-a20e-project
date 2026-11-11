@@ -178,6 +178,7 @@ class TelemetryTest(unittest.TestCase):
         self.assertIn(b'keep me', self.axiom.requests[-1]['body'])
         self.assertEqual(self.axiom.requests[-1]['body'], first_body)
         self.assertFalse(os.path.exists(self.client.spool_path))
+        self.assertEqual(self.client.status()['spool_drained'], 1)
 
     def test_a_spool_that_cannot_drain_is_reported_as_degraded(self):
         self.axiom.default = (500, {'error': 'down'}, {})
@@ -611,6 +612,41 @@ class TelemetryTest(unittest.TestCase):
         self.assertNotIn(TOKEN, json.dumps(report))
 
 
+class HealthStateTest(unittest.TestCase):
+    """The alert rules the sampler exports, independent of the console."""
+
+    def state(self, **changes):
+        values = {
+            'mem': {'used_percent': 11}, 'disk': {'used_percent': 40},
+            'batt': {'percent': 80, 'charging': True},
+            'tun': {'ready': True, 'disabled': False, 'errors': None, 'connections': 2,
+                    'requests': 100},
+            'running': {'nginx': True, 'status': True, 'supervisor': True},
+            'sample_age': 3,
+        }
+        values.update(changes)
+        return status.health_state(
+            int(time.time()), values['mem'], values['disk'], values['batt'],
+            values['tun'], values['running'], values['sample_age'])
+
+    def test_a_healthy_phone_exports_ok(self):
+        health, alerts = self.state()
+        self.assertEqual(health, 'ok')
+        self.assertEqual(alerts, [])
+
+    def test_tunnel_down_is_critical(self):
+        health, alerts = self.state(tun={'ready': False, 'disabled': False,
+                                         'errors': None, 'connections': 0,
+                                         'requests': 0})
+        self.assertEqual(health, 'crit')
+        self.assertTrue(any('tunnel' in alert['text'] for alert in alerts))
+
+    def test_a_stalled_sampler_warns(self):
+        health, alerts = self.state(sample_age=status.SAMPLE_SECONDS * 5)
+        self.assertEqual(health, 'warn')
+        self.assertTrue(any('sampler may be stalled' in alert['text'] for alert in alerts))
+
+
 class ConfigTest(unittest.TestCase):
     def test_rejects_insecure_endpoint_and_dataset(self):
         for change in ({'endpoint': 'http://example.com'},
@@ -848,6 +884,15 @@ class LiveServerTest(unittest.TestCase):
         self.assertEqual(payload['queued'], 0)
         self.assertEqual(payload['spool_events'], 0)
         self.assertTrue(self._health())
+
+    def test_health_is_exported_without_a_console_viewer(self):
+        """Nobody has to open the dashboard for the phone to report its health."""
+        self.assertTrue(self._wait(lambda: any(
+            event['event'] == 'galaxy.health' for event in self._events())),
+            'health was only produced for a console request')
+        event = next(event for event in self._events() if event['event'] == 'galaxy.health')
+        self.assertIn(event['health'], ('ok', 'warn', 'crit'))
+        self.assertIsInstance(event['alerts'], list)
 
     def test_axiom_outage_is_buffered_without_breaking_the_console(self):
         self.axiom.default = (500, {'error': 'down'}, {})

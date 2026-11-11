@@ -321,7 +321,8 @@ class Telemetry:
         self._health = None
         self._stats = {
             'exported': 0, 'failed': 0, 'rejected': 0, 'dropped': 0,
-            'batches': 0, 'deferred': 0, 'bytes_sent': 0, 'by_event': {},
+            'batches': 0, 'deferred': 0, 'bytes_sent': 0, 'spool_drained': 0,
+            'by_event': {},
             'last_success_at': None, 'last_error': None,
             'last_error_at': None, 'last_status': None,
         }
@@ -410,6 +411,7 @@ class Telemetry:
                 return {'ok': False, 'reason': outcome['error']}
             with self._lock:
                 self._spool_drop(spool_lines)
+                self._stats['spool_drained'] += len(spooled)
             self._record_outcome(outcome, spooled)
             return {'ok': True, 'spool': True, 'events': len(spooled),
                     'ingested': outcome['ingested'], 'failed': outcome['failed']}
@@ -1168,8 +1170,8 @@ class Telemetry:
         if live:
             live_age = int(now - live['updated_at'])
             for key in ('exported', 'failed', 'rejected', 'dropped', 'deferred',
-                        'bytes_sent', 'batches', 'last_success_at', 'last_error',
-                        'last_error_at', 'last_status'):
+                        'bytes_sent', 'spool_drained', 'batches', 'last_success_at',
+                        'last_error', 'last_error_at', 'last_status'):
                 if key in live:
                     stats[key] = live[key]
             queued = live.get('queued', queued)
@@ -1199,6 +1201,7 @@ class Telemetry:
             'dropped': stats['dropped'],
             'deferred': stats['deferred'],
             'bytes_sent': stats['bytes_sent'],
+            'spool_drained': stats['spool_drained'],
             'batches': stats['batches'],
             'last_success_at': utc_iso(stats['last_success_at']) if stats['last_success_at'] else None,
             'last_error': stats['last_error'],
