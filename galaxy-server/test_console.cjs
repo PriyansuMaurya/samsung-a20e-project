@@ -437,7 +437,7 @@ test('the mobile drawer takes focus and hands it back', async () => {
   }
 });
 
-test('music player searches, filters and reports a dead stream', async () => {
+test('music player sends tracks to the phone and mirrors its state', async () => {
   const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -445,6 +445,7 @@ test('music player searches, filters and reports a dead stream', async () => {
     page.on('pageerror', error => errors.push(error.message));
     const calls = [];
     let configured = true;
+    let audio = { state: 'idle', playing: '' };
     const tracks = [
       { id: '1', name: 'Rain On The Roof', artist: 'Aria Fields', album: 'Rain', duration: 201,
         image: 'https://usercontent.jamendo.com?type=album&id=1&width=200',
@@ -452,11 +453,14 @@ test('music player searches, filters and reports a dead stream', async () => {
       { id: '2', name: 'Late Night Drive', artist: 'Kite Club', album: '', duration: 149,
         image: '', audio: 'https://prod-1.storage.jamendo.com/?trackid=2&format=mp31' }
     ];
+    const label = 'Rain On The Roof — Aria Fields';
     await page.route('http://console.test/**', async route => {
       const url = new URL(route.request().url());
       const reply = data => route.fulfill({ json: data });
       if (url.pathname.startsWith('/api/')) {
-        calls.push({ path: url.pathname, search: url.search });
+        let body = null;
+        try { body = route.request().postDataJSON(); } catch { body = null; }
+        calls.push({ path: url.pathname, search: url.search, body });
         if (url.pathname === '/api/music/search') {
           if (!configured) {
             return reply({ configured: false, tracks: [],
@@ -464,6 +468,12 @@ test('music player searches, filters and reports a dead stream', async () => {
           }
           return reply({ configured: true, tracks, count: tracks.length });
         }
+        // The phone app owns playback: these two stand in for it.
+        if (url.pathname === '/api/device/audio') { return reply(audio); }
+        if (url.pathname === '/api/device/volume') {
+          return reply({ streams: { music: { index: 8, max: 15 } } });
+        }
+        if (url.pathname === '/api/device/control') { return reply({ ok: true }); }
         if (url.pathname === '/api/status') { return route.fulfill({ status: 503, json: { error: 'offline fixture' } }); }
         if (url.pathname === '/api/settings') { return reply({ settings: { host_probes: false }, db: { rows: {} } }); }
         if (url.pathname === '/api/events') { return reply({ audits: [] }); }
@@ -478,33 +488,45 @@ test('music player searches, filters and reports a dead stream', async () => {
     await page.goto('http://console.test/console#/music');
     await page.locator('#view-music').waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.querySelectorAll('#music-tracks .track').length === 2);
-    assert.equal(calls.filter(call => call.path === '/api/music/search')[0].search, '');
+    // Nothing is decoded in the browser any more.
+    assert.equal(await page.locator('#view-music audio').count(), 0);
     assert.equal(await page.locator('.track-title').first().textContent(), 'Rain On The Roof');
     assert.equal(await page.locator('.track-artist').first().textContent(), 'Aria Fields');
-    assert.equal(await page.locator('.track-art').first().getAttribute('src'), tracks[0].image);
-    assert.equal(await page.locator('.track audio').first().getAttribute('src'), tracks[0].audio);
-    assert.equal(await page.locator('.track-art.placeholder').count(), 1);
-    assert.equal(await page.locator('#music-count').textContent(), '2 tracks');
+    assert.equal(await page.locator('#music-volume-label').textContent(), '8/15');
+    await page.waitForFunction(() => document.querySelector('#music-now-state').textContent === 'idle');
 
-    await page.locator('#music-query').fill('rain');
-    const searched = page.waitForResponse(response => response.url().includes('/api/music/search?q=rain'));
-    await page.locator('#music-form button[type="submit"]').click();
-    await searched;
-    await page.waitForFunction(() => document.querySelectorAll('#music-tracks .track').length === 2);
+    // Play: the track's Jamendo URL is handed to the phone, not to an element.
+    audio = { state: 'playing', playing: label, position_ms: 12000, duration_ms: 201000 };
+    await page.locator('.track-play').first().click();
+    await page.waitForFunction(() => document.querySelector('#music-now-state').textContent === 'playing');
+    assert.equal(await page.locator('#music-now-title').textContent(), 'Rain On The Roof');
+    const play = calls.filter(call => call.path === '/api/device/control' &&
+      call.body && call.body.action === 'music-play');
+    assert.equal(play.length, 1);
+    assert.deepEqual(play[0].body.payload, { url: tracks[0].audio, name: label });
+    assert.equal(await page.locator('#music-now-state').textContent(), 'playing');
+    assert.equal(await page.locator('#music-now-time').textContent(), '0:12 / 3:21');
+    assert.equal(await page.locator('.track').first().getAttribute('data-state'), 'playing');
+    assert.equal(await page.locator('#music-now-toggle').textContent(), 'Pause');
 
-    const filtered = page.waitForResponse(response => response.url().includes('category=jazz'));
-    await page.locator('#music-categories button[data-category="jazz"]').click();
-    await filtered;
-    assert.equal(await page.locator('#music-categories button[data-category="jazz"]').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#music-categories button[data-category=""]').getAttribute('aria-pressed'), 'false');
+    // Pause is a command to the phone, and the panel follows its state.
+    audio = { state: 'paused', playing: label, position_ms: 12000, duration_ms: 201000 };
+    await page.locator('#music-now-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#music-now-toggle').textContent === 'Resume');
+    const pause = calls.filter(call => call.path === '/api/device/control' &&
+      call.body && call.body.action === 'media-control');
+    assert.deepEqual(pause[0].body.payload, { action: 'pause' });
+    assert.equal(await page.locator('#music-now-state').textContent(), 'paused');
 
-    // A stream that fails after the search answers is reported on its card.
-    await page.evaluate(() => document.querySelector('.track audio').dispatchEvent(new Event('error')));
+    // A stream the phone cannot open is reported, not silently ignored.
+    audio = { state: 'error', playing: label, error: 'the phone could not stream this track' };
+    await page.locator('.track-play').first().click();
+    await page.waitForFunction(() => document.querySelector('#music-now-artist').textContent.includes('could not stream'));
+    assert.equal(await page.locator('#music-now-state').textContent(), 'error');
     assert.equal(await page.locator('.track').first().getAttribute('data-state'), 'error');
-    assert.match(await page.locator('.track-error').first().textContent(), /Stream unavailable/);
-    assert.equal(await page.locator('.track-error').first().isVisible(), true);
+    assert.match(await page.locator('.track-note').first().textContent(), /could not stream/);
 
-    // Navigation keeps the loaded list and never restarts the stream.
+    // Navigation keeps the loaded list and does not restart playback.
     const before = calls.filter(call => call.path === '/api/music/search').length;
     await page.locator('[data-route="overview"]').click();
     await page.locator('#view-overview').waitFor({ state: 'visible' });

@@ -179,6 +179,30 @@ class DeviceProxyTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(FakeDevice.calls[-1][1], '/video/start')
 
+    def test_music_play_is_limited_to_jamendo_streams(self):
+        stream = 'https://prod-1.storage.jamendo.com/?trackid=168&format=mp31'
+        code, payload = self.call('POST', '/api/device/control',
+                                  json.dumps({'action': 'music-play',
+                                              'payload': {'url': stream,
+                                                          'name': "TriFace — J'm'e FPM"}}))
+        self.assertEqual(code, 200)
+        method, path, forwarded = FakeDevice.calls[-1]
+        self.assertEqual((method, path), ('POST', '/media/play-url'))
+        self.assertEqual(json.loads(forwarded['body']),
+                         {'url': stream, 'name': "TriFace — J'm'e FPM"})
+
+        # Nothing but an https Jamendo URL may be aimed at the phone's player.
+        for bad in ('http://prod-1.storage.jamendo.com/?trackid=1',
+                    'https://10.0.0.1/play',
+                    'https://jamendo.com.evil.example/x',
+                    'https://prod-1.storage.jamendo.com@evil.example/x'):
+            code, payload = self.call('POST', '/api/device/control',
+                                      json.dumps({'action': 'music-play',
+                                                  'payload': {'url': bad}}))
+            self.assertEqual(code, 400, bad)
+            self.assertIn('Jamendo', payload['error'])
+        self.assertEqual(FakeDevice.calls[-1][1], '/media/play-url')
+
     def test_streaming_and_filename_rules(self):
         code, raw = self.call('GET', '/api/device/camera/stream?camera=0&fps=2')
         self.assertEqual(code, 200)

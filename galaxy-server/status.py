@@ -291,6 +291,8 @@ DEVICE_CONTROLS = {
     'photo-delete': ('POST', '/photo/delete'),
     'recording-play': ('POST', '/recording/play'),
     'recording-delete': ('POST', '/recording/delete'),
+    # Streams a Jamendo track on the phone speaker instead of the browser.
+    'music-play': ('POST', '/media/play-url'),
 }
 
 DEVICE_READS = {
@@ -481,6 +483,23 @@ def music_tracks(search='', category='', limit=MUSIC_LIMIT):
             'audio': audio,
         })
     return {'configured': True, 'tracks': tracks, 'count': len(tracks)}
+
+
+def is_jamendo_stream(url):
+    """True only for an https URL on a Jamendo host.
+
+    The phone app checks this too; doing it here keeps a compromised dashboard
+    session from aiming the phone's player at an address on its own network.
+    """
+    if not isinstance(url, str) or not url or len(url) > 2048:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or '').lower()
+    return (parsed.scheme == 'https'
+            and (host == 'jamendo.com' or host.endswith('.jamendo.com')))
 
 
 def _jamendo_error(raw):
@@ -1576,11 +1595,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             user = session_user(self)[0]
             self._html(200, body.replace('{{USER}}', user),
-                       # Cover art and audio come from Jamendo's own hosts, so
-                       # they are the only third parties allowed. Search and
-                       # every API call still go through this server.
+                       # Cover art comes from Jamendo's own host, the only
+                       # third party allowed. Search, playback commands and
+                       # every API call still go through this server; the phone
+                       # app, not the browser, streams the audio.
                        {'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https://*.jamendo.com; "
-                                                   "media-src 'self' https://*.jamendo.com; "
                                                    "style-src 'self' 'unsafe-inline'; "
                                                    "script-src 'self' 'unsafe-inline'; "
                                                    "connect-src 'self'; frame-ancestors 'none'"})
@@ -1914,6 +1933,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         payload = data.get('payload')
         if not isinstance(payload, dict):
             payload = {}
+        if action == 'music-play':
+            url = payload.get('url')
+            if not is_jamendo_stream(url):
+                self._json(400, {'error': 'Only Jamendo stream URLs can be played'})
+                return
+            payload = {'url': url, 'name': str(payload.get('name') or '')[:120]}
         method, route = spec
         try:
             if method == 'GET':

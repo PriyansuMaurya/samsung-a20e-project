@@ -153,7 +153,11 @@
     if (route === 'services' || route === 'networking') { loadEvents(); }
     // The player keeps its tracks (and any audio playing) after the first
     // load, so returning to this view does not restart the stream.
-    if (route === 'music' && !music.loaded) { loadMusic(); }
+    if (route === 'music') {
+      if (!music.loaded) { loadMusic(); }
+      loadMusicStatus();
+      loadMusicVolume();
+    }
     if (route === 'device') {
       loadDevice();
     } else {
@@ -1882,9 +1886,19 @@
   }
 
   // ------------------------------------------------------------------ music
-  // Only the search request goes through this server. Track audio is fetched
-  // by the browser straight from Jamendo's CDN, so the phone proxies nothing.
-  var music = { loaded: false, busy: false, query: '', category: '' };
+  // The browser never decodes audio. The dashboard sends the track's Jamendo
+  // URL to the phone app, which streams and plays it on the phone speaker, and
+  // the now-playing panel below is the remote control for it.
+  var music = { loaded: false, busy: false, query: '', category: '', current: null };
+
+  var MUSIC_TEXT = {
+    idle: ['Nothing playing', 'Playback happens on the phone speaker.'],
+    loading: ['Buffering on the phone…', ''],
+    playing: ['Playing on the phone', ''],
+    paused: ['Paused on the phone', ''],
+    error: ['The phone could not play this track', ''],
+    offline: ['Phone unreachable', '']
+  };
 
   function musicStatus(text, kind) {
     var node = $('#music-status');
@@ -1893,46 +1907,132 @@
     if (kind) { node.dataset.state = kind; } else { delete node.dataset.state; }
   }
 
+  function trackLabel(track) {
+    return (track.name + ' — ' + track.artist).slice(0, 120);
+  }
+
+  function setTrackNote(note, text) {
+    note.textContent = text;
+    note.hidden = !text;
+  }
+
   function trackCard(track) {
-    var audio = el('audio', { controls: '', preload: 'none', src: track.audio });
+    var label = trackLabel(track);
+    var note = el('span', { class: 'track-note', hidden: '', role: 'status' });
+    var button = el('button', { class: 'btn small track-play', type: 'button', text: 'Play on phone' });
+    button.addEventListener('click', function () { playOnPhone(track, button, note); });
     var art = track.image
       ? el('img', { class: 'track-art', src: track.image, alt: 'Cover art for ' + track.name, loading: 'lazy', width: '64', height: '64' })
       : el('span', { class: 'track-art placeholder', 'aria-hidden': 'true', text: '♪' });
-    var card = el('li', { class: 'track', 'data-track': track.id }, [
+    return el('li', { class: 'track', 'data-track': track.id, 'data-label': label }, [
       art,
       el('div', { class: 'track-body' }, [
         el('div', { class: 'track-head' }, [
           el('strong', { class: 'track-title', text: track.name, title: track.name }),
           el('span', { class: 'track-artist', text: track.artist, title: track.artist })
         ]),
-        audio,
-        el('p', { class: 'track-error', hidden: '', role: 'alert' })
+        el('div', { class: 'track-actions' }, [button, note])
       ])
     ]);
-    // A stream can fail long after the search succeeded: the CDN can refuse a
-    // track or the connection can drop mid-song. Say so on the card instead of
-    // leaving a player that silently does nothing.
-    audio.addEventListener('error', function () {
-      card.dataset.state = 'error';
-      var note = $('.track-error', card);
-      note.textContent = 'Stream unavailable. Jamendo did not return audio for this track.';
-      note.hidden = false;
-      toast('Stream unavailable: ' + track.name, 'error');
+  }
+
+  function playOnPhone(track, button, note) {
+    var label = trackLabel(track);
+    button.disabled = true;
+    setTrackNote(note, '');
+    musicStatus('Sending to the phone…');
+    deviceControl('music-play', { url: track.audio, name: label })
+      .then(function () {
+        music.current = { id: track.id, label: label, name: track.name,
+          artist: track.artist, image: track.image || '' };
+        musicStatus('');
+        renderNowPlaying({ state: 'loading', playing: label });
+        // The stream needs a moment to open before the phone reports a state.
+        setTimeout(loadMusicStatus, 700);
+        setTimeout(loadMusicStatus, 2500);
+      })
+      .catch(function (error) {
+        music.current = null;
+        musicStatus('');
+        setTrackNote(note, error.message);
+        toast('Phone playback: ' + error.message, 'error');
+        loadMusicStatus();
+      })
+      .finally(function () { button.disabled = false; });
+  }
+
+  function clockSpan(ms) {
+    if (!ms || ms < 0) { return ''; }
+    var total = Math.round(ms / 1000);
+    return Math.floor(total / 60) + ':' + pad(total % 60);
+  }
+
+  function renderNowPlaying(status) {
+    status = status || {};
+    var state = MUSIC_TEXT[status.state] ? status.state
+      : (status.playing ? 'playing' : 'idle');
+    var label = status.playing || '';
+    var current = music.current && music.current.label === label ? music.current : null;
+    var panel = $('#music-now');
+    panel.dataset.state = state;
+    $('#music-now-title').textContent = current ? current.name
+      : (label && state !== 'idle' ? label : MUSIC_TEXT[state][0]);
+    var sub = MUSIC_TEXT[state][1];
+    if (current && state !== 'idle') { sub = current.artist; }
+    if (status.error) { sub = status.error; }
+    $('#music-now-artist').textContent = sub || '';
+    var art = $('#music-now-art');
+    if (current && current.image) {
+      art.src = current.image;
+      art.hidden = false;
+    } else {
+      art.removeAttribute('src');
+      art.hidden = true;
+    }
+    $('#music-now-state').textContent = state;
+    var toggle = $('#music-now-toggle');
+    var stop = $('#music-now-stop');
+    var active = state === 'playing' || state === 'paused' || state === 'loading';
+    toggle.disabled = !(state === 'playing' || state === 'paused');
+    toggle.textContent = state === 'paused' ? 'Resume' : 'Pause';
+    stop.disabled = !active && state !== 'error';
+    var time = '';
+    if (status.duration_ms > 0) {
+      time = clockSpan(status.position_ms) + ' / ' + clockSpan(status.duration_ms);
+    } else if (status.position_ms > 0) {
+      time = clockSpan(status.position_ms);
+    }
+    $('#music-now-time').textContent = time;
+    $$('#music-tracks .track').forEach(function (card) {
+      var match = card.dataset.label === label;
+      if (match && (active || state === 'error')) { card.dataset.state = state; }
+      else { delete card.dataset.state; }
+      if (match && state === 'error') {
+        setTrackNote($('.track-note', card), status.error || MUSIC_TEXT.error[0]);
+      }
     });
-    audio.addEventListener('playing', function () {
-      card.dataset.state = 'playing';
-      $('.track-error', card).hidden = true;
+  }
+
+  function loadMusicStatus() {
+    if (state.route !== 'music') { return; }
+    return api('/api/device/audio').then(function (audio) {
+      renderNowPlaying(audio);
+    }).catch(function (error) {
+      renderNowPlaying({ state: 'offline', error: error.message });
     });
-    audio.addEventListener('play', function () {
-      // Ten players in one grid must not overlap.
-      $$('#music-tracks audio').forEach(function (other) {
-        if (other !== audio) { other.pause(); }
-      });
+  }
+
+  function loadMusicVolume() {
+    return api('/api/device/volume').then(function (data) {
+      var stream = ((data || {}).streams || {}).music;
+      if (!stream) { return; }
+      var input = $('#music-volume');
+      input.max = String(stream.max);
+      input.value = String(stream.index);
+      $('#music-volume-label').textContent = stream.index + '/' + stream.max;
+    }).catch(function () {
+      // The now-playing line already explains an unreachable phone.
     });
-    audio.addEventListener('pause', function () {
-      if (card.dataset.state === 'playing') { delete card.dataset.state; }
-    });
-    return card;
   }
 
   function renderMusic(data) {
@@ -1974,6 +2074,32 @@
   }
 
   function wireMusic() {
+    $('#music-now-toggle').addEventListener('click', function () {
+      var action = this.textContent === 'Resume' ? 'resume' : 'pause';
+      deviceControl('media-control', { action: action })
+        .then(function () { setTimeout(loadMusicStatus, 400); })
+        .catch(function (error) { toast('Phone playback: ' + error.message, 'error'); });
+    });
+    $('#music-now-stop').addEventListener('click', function () {
+      deviceControl('media-control', { action: 'stop' })
+        .then(function () {
+          music.current = null;
+          renderNowPlaying({ state: 'idle' });
+        })
+        .catch(function (error) { toast('Phone playback: ' + error.message, 'error'); });
+    });
+    var volumeTimer = null;
+    $('#music-volume').addEventListener('input', function () {
+      $('#music-volume-label').textContent = this.value + '/' + this.max;
+    });
+    $('#music-volume').addEventListener('change', function () {
+      var input = this;
+      clearTimeout(volumeTimer);
+      volumeTimer = setTimeout(function () {
+        deviceControl('volume', { stream: 'music', index: Number(input.value) })
+          .catch(function (error) { toast('Phone volume: ' + error.message, 'error'); });
+      }, 250);
+    });
     $('#music-form').addEventListener('submit', function (event) {
       event.preventDefault();
       music.query = $('#music-query').value.trim();
@@ -2200,6 +2326,13 @@
         loadDevice();
       }
     }, 15000);
+    // The phone does the decoding, so the panel only needs a light poll for
+    // position and state; nothing is streamed through the tunnel.
+    setInterval(function () {
+      if (document.visibilityState === 'visible' && state.route === 'music') {
+        loadMusicStatus();
+      }
+    }, 4000);
     setInterval(function () {
       if (document.visibilityState === 'visible' && state.route !== 'logs') { loadTimeline(state.range); }
     }, 60000);

@@ -16,6 +16,8 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
@@ -35,6 +37,8 @@ final class LocalServer {
     static final String TAG = "GalaxyDevice";
     static final int PORT = 8790;
     private static final int MAX_BODY = 8 * 1024 * 1024;
+    private static final int MAX_STREAM_URL = 2048;
+    private static final int MAX_STREAM_LABEL = 120;
     private static final String BOUNDARY = "galaxyframe";
 
     private final ControlService service;
@@ -322,6 +326,23 @@ final class LocalServer {
             writeJson(out, 200, audio.play(mediaFile(name)));
             return;
         }
+        if ("POST".equals(method) && "/media/play-url".equals(path)) {
+            // The dashboard streams Jamendo tracks here so the sound comes out
+            // of the phone, not the browser. Only Jamendo hosts are accepted,
+            // so a compromised session cannot point the player at the LAN.
+            org.json.JSONObject body = request.json();
+            String url = body.optString("url", "");
+            String label = body.optString("name", "").trim();
+            if (!jamendoStream(url)) {
+                throw new DeviceApi.ApiError(400,
+                        "only Jamendo stream URLs can be played");
+            }
+            if (label.isEmpty() || label.length() > MAX_STREAM_LABEL) {
+                label = "Jamendo track";
+            }
+            writeJson(out, 200, audio.playUrl(url, label));
+            return;
+        }
         if ("POST".equals(method) && "/media/control".equals(path)) {
             writeJson(out, 200, audio.control(request.json().optString("action", "stop")));
             return;
@@ -482,6 +503,20 @@ final class LocalServer {
     private static void writeShort(ByteArrayOutputStream out, int value) {
         out.write(value & 0xff);
         out.write((value >> 8) & 0xff);
+    }
+
+    private static boolean jamendoStream(String url) {
+        if (url == null || url.isEmpty() || url.length() > MAX_STREAM_URL) {
+            return false;
+        }
+        try {
+            URI parsed = new URI(url);
+            String host = parsed.getHost();
+            return "https".equalsIgnoreCase(parsed.getScheme()) && host != null
+                    && ("jamendo.com".equals(host) || host.endsWith(".jamendo.com"));
+        } catch (URISyntaxException error) {
+            return false;
+        }
     }
 
     private File mediaFile(String name) {

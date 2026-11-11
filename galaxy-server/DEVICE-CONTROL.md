@@ -68,6 +68,7 @@ endpoint used through `status.py`.
 | Recording | `action: record-start` / `record-stop` | 16 kHz mono WAV, stored in app storage |
 | Recordings | `GET /api/device/recordings`, `recording`, `recording-play`, `recording-delete` | play on the phone speaker |
 | Media | `GET /api/device/media`, upload, `media-play`, `media-control`, `media-delete` | uploads up to 8 MB |
+| Stream URL | `action: music-play {url, name}` → `POST /media/play-url` | only `https://*.jamendo.com`; `MediaPlayer` prepares asynchronously and plays on the phone |
 | Sensors | `GET /api/device/sensors` | one reading per sensor, 800 ms budget |
 | Power/storage | `GET /api/device/battery`, `GET /api/device/storage` | |
 | Connectivity | `GET /api/device/connectivity` | transport, metered/validated, addresses, link speed, RSSI, Bluetooth and airplane state |

@@ -138,7 +138,7 @@ The **Device** view drives a small companion app (`android/device-control`) that
 
 ## Music player
 
-The **Music** view searches the free [Jamendo](https://devportal.jamendo.com/) catalogue and plays Creative Commons tracks with a plain HTML5 `<audio>` player. A search box covers track and artist names, and the chips filter by genre (`rock`, `pop`, `electronic`, `hiphop`, `jazz`, `classical`, `lounge`, `world`); with no search the results are ordered by popularity.
+The **Music** view searches the free [Jamendo](https://devportal.jamendo.com/) catalogue and plays Creative Commons tracks **on the phone speaker**, not in the browser. A search box covers track and artist names, and the chips filter by genre (`rock`, `pop`, `electronic`, `hiphop`, `jazz`, `classical`, `lounge`, `world`); with no search the results are ordered by popularity.
 
 Create a free application at [devportal.jamendo.com](https://devportal.jamendo.com/) and store its client id on the phone. The key is asked for without echo and written to `run/jamendo.json` (mode 0600):
 
@@ -146,7 +146,9 @@ Create a free application at [devportal.jamendo.com](https://devportal.jamendo.c
 ~/galaxy-server/serverctl jamendo-key
 ```
 
-Only the search request passes through `status.py` (`/api/music/search`), which calls `https://api.jamendo.com/v3.0/tracks/` with `namesearch`, `fuzzytags`, `imagesize=200` and `limit=10`, and returns just the fields the player draws — name, artist, album, duration, cover `image` and stream `audio` URL. The client id and Jamendo's large `waveform` payload never reach the browser. Audio and cover art load directly from Jamendo's CDN, so the phone does not relay the stream; the console's `Content-Security-Policy` allows those hosts for `media-src` and `img-src` and still refuses third-party connections. Playback continues while other views are open, only one track plays at a time, and a stream that fails after the search is reported on its own card instead of leaving a dead player.
+Only the search request passes through `status.py` (`/api/music/search`), which calls `https://api.jamendo.com/v3.0/tracks/` with `namesearch`, `fuzzytags`, `imagesize=200` and `limit=10`, and returns just the fields the player draws — name, artist, album, duration, cover `image` and stream `audio` URL. The client id and Jamendo's large `waveform` payload never reach the browser.
+
+Pressing play sends the track's `audio` URL to the phone app (`POST /api/device/control` with `music-play`, which becomes `/media/play-url` on the app). The app streams it with `MediaPlayer`, so the sound comes out of the phone and the browser never decodes audio. The now-playing panel is a remote: it polls `/api/device/audio` for state and position, sends `media-control` for pause, resume and stop, and sets the phone's media volume. Both `status.py` and the app accept only `https://*.jamendo.com` stream URLs, so a compromised session cannot point the player at an address on the home network. Cover art still loads in the browser from Jamendo's host, the only third party the console's `Content-Security-Policy` allows, and `connect-src` remains `'self'`. Playback continues while other views are open and after the browser tab closes; a stream the phone cannot open is reported on its card and in the panel instead of leaving a dead control.
 
 ## Remote telemetry (Axiom)
 

@@ -1699,8 +1699,68 @@ input[type="range"] {
 .track-title, .track-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track-title { font-size: 13px; font-weight: 600; }
 .track-artist { font-size: 11.5px; color: var(--muted); }
-.track audio { width: 100%; height: 34px; display: block; }
-.track-error { font-size: 11.5px; color: #ff978c; }
+.track-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 1px; }
+.track-play { flex: none; }
+.track-note { font-size: 11.5px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.track[data-state="error"] .track-note { color: #ff978c; }
+
+/* The phone owns the sound, so this strip is a remote: what is playing, how
+   far in, and the three things worth changing without leaving the view. */
+.now-playing {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-hover);
+  transition: border-color .15s ease;
+}
+.now-playing[data-state="playing"] { border-color: var(--lime-dim); }
+.now-playing[data-state="error"] { border-color: #ff6b5c66; }
+.now-art { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; border: 1px solid var(--line-soft); }
+.now-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.now-copy strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now-state {
+  font: 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--void);
+  white-space: nowrap;
+}
+.now-playing[data-state="playing"] .now-state { color: var(--lime); border-color: #c3f45155; }
+.now-playing[data-state="loading"] .now-state { color: var(--amber); border-color: #f2b44155; }
+.now-playing[data-state="error"] .now-state,
+.now-playing[data-state="offline"] .now-state { color: var(--red); border-color: #ff6b5c55; }
+.now-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.now-progress {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.now-time { font: 11px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.now-volume { display: flex; align-items: center; gap: 9px; font-size: 11.5px; color: var(--muted); margin-left: auto; }
+.now-volume input { width: 130px; accent-color: var(--lime); }
+.now-volume output { font: 11px var(--mono); color: var(--ink); min-width: 3ch; text-align: right; }
+
+@media (max-width: 640px) {
+  .now-playing { grid-template-columns: auto minmax(0, 1fr); }
+  .now-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .now-state { justify-self: start; }
+  .now-volume { margin-left: 0; }
+}
 
 @media (max-width: 760px) {
   .cam-layout { grid-template-columns: minmax(0, 1fr); }

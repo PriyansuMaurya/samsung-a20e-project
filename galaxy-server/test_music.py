@@ -157,6 +157,17 @@ class MusicTest(unittest.TestCase):
         self.assertEqual(code, 502)
         self.assertIn('unreachable', payload['error'])
 
+    def test_jamendo_stream_url_rules(self):
+        self.assertTrue(status.is_jamendo_stream(
+            'https://prod-1.storage.jamendo.com/?trackid=168&format=mp31'))
+        self.assertTrue(status.is_jamendo_stream('https://jamendo.com/track/1'))
+        for bad in ('http://prod-1.storage.jamendo.com/?trackid=1',
+                    'https://prod-1.storage.jamendo.com.evil.example/x',
+                    'https://evil.example/jamendo.com',
+                    'https://prod-1.storage.jamendo.com@evil.example/x',
+                    '', None, 42, 'https://prod-1.storage.jamendo.com/' + 'x' * 2100):
+            self.assertFalse(status.is_jamendo_stream(bad), bad)
+
     def test_client_id_validation_and_file_mode(self):
         with self.assertRaises(ValueError):
             status.set_music_client('short')
@@ -168,14 +179,15 @@ class MusicTest(unittest.TestCase):
             mode = oct(os.stat(os.path.join(self.directory.name, 'jamendo.json')).st_mode & 0o777)
             self.assertEqual(mode, '0o600')
 
-    def test_console_csp_allows_jamendo_media_only(self):
+    def test_console_csp_allows_jamendo_cover_art_only(self):
         Path(self.directory.name, 'console.html').write_text('<p>{{USER}}</p>', encoding='utf-8')
         code, _body, headers = self.call('GET', '/console')
         self.assertEqual(code, 200)
         csp = headers['Content-Security-Policy']
-        self.assertIn('media-src \'self\' https://*.jamendo.com', csp)
         self.assertIn('img-src \'self\' data: https://*.jamendo.com', csp)
         self.assertIn('connect-src \'self\'', csp)
+        # The browser no longer plays the audio, so it needs no media source.
+        self.assertNotIn('media-src', csp)
 
 
 if __name__ == '__main__':

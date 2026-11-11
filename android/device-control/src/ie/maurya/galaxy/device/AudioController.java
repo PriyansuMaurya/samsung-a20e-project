@@ -1,6 +1,7 @@
 package ie.maurya.galaxy.device;
 
 import android.content.Context;
+import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaPlayer;
@@ -45,6 +46,8 @@ final class AudioController {
     private long recordingStarted;
     private MediaPlayer player;
     private String playing = "";
+    private volatile boolean preparing;
+    private volatile String playbackError = "";
     private final Object lock = new Object();
 
     AudioController(Context context) {
@@ -77,7 +80,9 @@ final class AudioController {
                 .put("bytes", recordingBytes)
                 .put("streaming", !subscribers.isEmpty())
                 .put("sample_rate", SAMPLE_RATE)
-                .put("playing", playing);
+                .put("playing", playing)
+                .put("state", playbackState())
+                .put("error", playbackError);
         if (recording && recordingStarted > 0) {
             payload.put("seconds", (System.currentTimeMillis() - recordingStarted) / 1000);
         }
@@ -152,13 +157,14 @@ final class AudioController {
     JSONObject play(File file) throws Exception {
         synchronized (lock) {
             releasePlayer();
-            MediaPlayer next = new MediaPlayer();
+            MediaPlayer next = mediaPlayer();
             next.setDataSource(file.getAbsolutePath());
             next.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                 @Override
                 public void onCompletion(MediaPlayer done) {
                     synchronized (lock) {
                         playing = "";
+                        preparing = false;
                     }
                 }
             });
@@ -166,8 +172,107 @@ final class AudioController {
             next.start();
             player = next;
             playing = file.getName();
+            preparing = false;
+            playbackError = "";
         }
         return new JSONObject().put("ok", true).put("file", file.getName());
+    }
+
+    /**
+     * Stream a remote track straight from its URL. Preparing happens off the
+     * request thread because a CDN can take seconds to answer, and the phone
+     * keeps playing after the dashboard tab closes.
+     */
+    JSONObject playUrl(String url, String label) throws Exception {
+        synchronized (lock) {
+            releasePlayer();
+            final MediaPlayer next = mediaPlayer();
+            next.setDataSource(url);
+            next.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                @Override
+                public void onPrepared(MediaPlayer ready) {
+                    synchronized (lock) {
+                        if (player != ready) {
+                            return;
+                        }
+                        preparing = false;
+                        try {
+                            ready.start();
+                        } catch (IllegalStateException error) {
+                            playbackError = "the phone could not start this track";
+                        }
+                    }
+                }
+            });
+            next.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                @Override
+                public void onCompletion(MediaPlayer done) {
+                    synchronized (lock) {
+                        if (player == done) {
+                            releasePlayer();
+                        }
+                        playing = "";
+                        preparing = false;
+                    }
+                }
+            });
+            next.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(MediaPlayer failed, int what, int extra) {
+                    synchronized (lock) {
+                        if (player == failed) {
+                            releasePlayer();
+                        }
+                        playing = "";
+                        preparing = false;
+                        playbackError = "the phone could not stream this track";
+                        Log.w(TAG, "stream failed: what=" + what + " extra=" + extra);
+                    }
+                    return true;
+                }
+            });
+            player = next;
+            playing = label;
+            preparing = true;
+            playbackError = "";
+            try {
+                next.prepareAsync();
+            } catch (Exception error) {
+                releasePlayer();
+                playing = "";
+                preparing = false;
+                playbackError = "the phone could not open this track";
+                throw new DeviceApi.ApiError(500, playbackError);
+            }
+        }
+        return new JSONObject().put("ok", true).put("file", label);
+    }
+
+    private MediaPlayer mediaPlayer() {
+        MediaPlayer next = new MediaPlayer();
+        next.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build());
+        return next;
+    }
+
+    private String playbackState() {
+        if (!playbackError.isEmpty()) {
+            return "error";
+        }
+        MediaPlayer current = player;
+        if (current == null) {
+            return "idle";
+        }
+        if (preparing) {
+            return "loading";
+        }
+        try {
+            return current.isPlaying() ? "playing" : "paused";
+        } catch (IllegalStateException error) {
+            return "loading";
+        }
     }
 
     JSONObject control(String action) throws Exception {
@@ -183,6 +288,8 @@ final class AudioController {
             } else if ("stop".equals(action)) {
                 releasePlayer();
                 playing = "";
+                preparing = false;
+                playbackError = "";
             } else {
                 throw new DeviceApi.ApiError(400, "unknown media action");
             }
@@ -194,6 +301,8 @@ final class AudioController {
         synchronized (lock) {
             releasePlayer();
             playing = "";
+            preparing = false;
+            playbackError = "";
         }
         stopCapture();
     }
