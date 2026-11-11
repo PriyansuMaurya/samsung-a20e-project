@@ -2,6 +2,8 @@
 
 Measured on the phone on 2026-11-11 (paths relative to `~/galaxy-server`, sizes
 in bytes). Everything below was read from the device over adb, not inferred.
+Delivery, failure recovery and resource use were validated afterwards; see
+`VALIDATION.md` for that evidence and for what is still unconfirmed in Axiom.
 
 ## 1. What is stored locally
 
