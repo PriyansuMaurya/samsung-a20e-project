@@ -9,3 +9,7 @@ __pycache__/
 .dashboard-htpasswd
 # Temporary deployment provisioning files, including webhook credentials.
 .deployment-*
+# Android SDK download and the companion app's build outputs and signing key.
+.android-sdk/
+android/device-control/build/
+android/device-control/galaxy.keystore
