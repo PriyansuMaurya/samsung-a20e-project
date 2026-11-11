@@ -1282,8 +1282,7 @@
     if (rotation.automatic) {
       select.value = 'auto';
     } else {
-      var degrees = String(rotation.user_degrees || 0);
-      select.value = degrees === '180' ? 'auto' : degrees;
+      select.value = String(rotation.user_degrees || 0);
     }
     select.disabled = rotation.writable === false;
     $('#rotation-state').textContent = rotation.writable === false ? 'locked'

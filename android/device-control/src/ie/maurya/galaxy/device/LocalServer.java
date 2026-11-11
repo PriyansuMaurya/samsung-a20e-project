@@ -277,8 +277,9 @@ final class LocalServer {
             byte[] frame = camera.capture();
             File saved = camera.saveCapture(frame, id);
             String opened = camera.openSize();
-            if (camera.subscriberCount() == 0) {
-                // Release the sensor so the torch and other apps work again.
+            if (camera.subscriberCount() == 0 && !camera.recording()) {
+                // Release the sensor so the torch and other apps work again,
+                // but never cut a recording short for a still.
                 camera.stop();
             }
             writeJson(out, 200, new JSONObject().put("ok", true)
