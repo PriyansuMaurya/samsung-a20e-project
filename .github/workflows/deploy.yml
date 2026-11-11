@@ -26,9 +26,14 @@ jobs:
       - name: Test terminal and deployment authentication
         run: python3 -m unittest discover -s galaxy-server -p 'test_*.py'
       - name: Install dashboard browser test tools
+        timeout-minutes: 6
         run: |
+          # --with-deps runs apt-get against the Ubuntu mirrors, which were
+          # unreachable from the runner and hung until the job timeout. The
+          # hosted image already carries the browser libraries, so install the
+          # browser only and fail fast if one is missing.
           npm install --prefix "$RUNNER_TEMP/console-browser" --no-save --package-lock=false playwright@1.65.0
-          "$RUNNER_TEMP/console-browser/node_modules/.bin/playwright" install --with-deps chromium
+          "$RUNNER_TEMP/console-browser/node_modules/.bin/playwright" install chromium
       - name: Test dashboard state across navigation
         run: NODE_PATH="$RUNNER_TEMP/console-browser/node_modules" node --test galaxy-server/test_console.cjs
       - name: Deploy tested commit and verify completion
