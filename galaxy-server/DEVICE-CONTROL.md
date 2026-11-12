@@ -115,8 +115,22 @@ endpoint used through `status.py`.
    the `MediaPlayer` can decode are worth uploading.
 11. **The app must be armed.** The control service runs as a foreground service
    with `camera|microphone` types; disarming it or stopping the app closes the
-   port. The console reports "control app not running" instead of failing
-   silently.
+   port. The console reports "control app is asleep or stopped" instead of
+   failing silently.
+12. **Samsung freezes idle apps even when armed.** One UI's `FreecessController`
+   puts the process in the `frozen` cgroup after the screen goes off, and a
+   frozen process runs no code: `accept()` never returns, so the port accepts
+   connections (the kernel completes the handshake) but never answers. Waiters
+   then queue up and time out, which the console shows as the phone being
+   unreachable. Observed on this A20e: `4:freezer:/frozen` in
+   `/proc/<pid>/cgroup`, `FreecessController: enable frozen app
+   (ie.maurya.galaxy.device,10284)`, and ~17 sockets parked in `CLOSE_WAIT` on
+   port 8790. The battery optimisation whitelist does not exempt the app. Two
+   things do: audio playback (the app stays unfrozen while a track plays) and
+   the phone's own settings. On the phone, add the app to **Settings → Battery
+   and device care → Battery → Background usage limits → Never sleeping apps**
+   and turn off **Put unused apps to sleep**; opening the app also wakes it
+   immediately, and playback continues across a screen lock.
 
 ## 5. Build and install
 

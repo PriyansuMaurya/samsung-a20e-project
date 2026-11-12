@@ -243,7 +243,9 @@ class DeviceProxyTest(unittest.TestCase):
         status.write_device({'token': 'z' * 32, 'port': 9})
         code, payload = self.call('GET', '/api/device/battery')
         self.assertEqual(code, 503)
-        self.assertIn('not running', payload['error'])
+        # An unreachable app may be stopped or frozen by the phone's own battery
+        # policy, so the answer names both and says how to wake it.
+        self.assertEqual(payload['error'], status.DEVICE_ASLEEP)
         status.write_device({'token': 'x' * 32, 'port': self.device.server_port})
 
 

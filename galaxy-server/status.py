@@ -310,6 +310,13 @@ DEVICE_READS = {
     '/api/device/audio': '/audio/status',
 }
 
+# The control app can be alive but unreachable: Samsung freezes an app that is
+# idle with the screen off, even while it runs a foreground service, so every
+# socket in it blocks until something wakes the app. The console cannot tell
+# the two apart from the outside, so it says both.
+DEVICE_ASLEEP = ('The control app is asleep or stopped. Open the Galaxy Device app '
+                 'on the phone to wake it.')
+
 DEVICE_STREAMS = {
     '/api/device/camera/stream': '/camera/stream',
     '/api/device/audio/stream': '/audio/stream',
@@ -1704,7 +1711,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 _status, health = device_call('/health', timeout=4)
             except (OSError, http.client.HTTPException):
-                self._device_unavailable('The control app is not running on the phone')
+                self._device_unavailable(DEVICE_ASLEEP)
                 return
             payload = {'paired': True, 'health': health}
             for key, route in (('capabilities', '/capabilities'), ('battery', '/battery'),
@@ -1730,7 +1737,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             status, data = device_call(route, timeout=15)
         except (OSError, http.client.HTTPException):
-            self._device_unavailable('The control app is not running on the phone')
+            self._device_unavailable(DEVICE_ASLEEP)
             return
         self._json(status, data)
 
@@ -1744,7 +1751,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             connection.request('GET', target, headers={'X-Galaxy-Token': config['token']})
             response = connection.getresponse()
         except (OSError, http.client.HTTPException):
-            self._device_unavailable('The control app is not running on the phone')
+            self._device_unavailable(DEVICE_ASLEEP)
             return
         if response.status != 200:
             raw = response.read()
@@ -1887,7 +1894,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             _status, result = device_call('/pair', {'token': token}, timeout=8)
         except (OSError, http.client.HTTPException):
-            self._device_unavailable('The control app is not running on the phone')
+            self._device_unavailable(DEVICE_ASLEEP)
             return
         if result.get('paired') is not True:
             add_audit('local', 'device-pair', 'failed', str(result.get('error') or 'refused'))
@@ -1910,7 +1917,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             _status, result = device_call('/pair', {'token': token}, timeout=8)
         except (OSError, http.client.HTTPException):
-            self._device_unavailable('The control app is not running on the phone')
+            self._device_unavailable(DEVICE_ASLEEP)
             return
         if result.get('paired') is not True:
             add_audit(user, 'device-pair', 'failed', str(result.get('error') or 'refused'))
@@ -1947,7 +1954,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 status, result = device_call(route, payload, timeout=30)
         except (OSError, http.client.HTTPException):
-            self._device_unavailable('The control app is not running on the phone')
+            self._device_unavailable(DEVICE_ASLEEP)
             return
         detail = str(result.get('error') or result.get('file') or result.get('size') or '')
         add_audit(user, 'device-' + action, 'ok' if status == 200 else 'failed', detail[:160])
@@ -1983,7 +1990,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raw = response.read()
             status = response.status
         except (OSError, http.client.HTTPException):
-            self._device_unavailable('The control app is not running on the phone')
+            self._device_unavailable(DEVICE_ASLEEP)
             return
         finally:
             connection.close()
