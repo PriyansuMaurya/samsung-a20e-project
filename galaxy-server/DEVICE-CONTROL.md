@@ -125,12 +125,21 @@ endpoint used through `status.py`.
    unreachable. Observed on this A20e: `4:freezer:/frozen` in
    `/proc/<pid>/cgroup`, `FreecessController: enable frozen app
    (ie.maurya.galaxy.device,10284)`, and ~17 sockets parked in `CLOSE_WAIT` on
-   port 8790. The battery optimisation whitelist does not exempt the app. Two
-   things do: audio playback (the app stays unfrozen while a track plays) and
-   the phone's own settings. On the phone, add the app to **Settings → Battery
-   and device care → Battery → Background usage limits → Never sleeping apps**
-   and turn off **Put unused apps to sleep**; opening the app also wakes it
-   immediately, and playback continues across a screen lock.
+   port 8790. The battery optimisation whitelist and the `freecess_disable`
+   global setting do not exempt the app.
+
+   One thing does, and the app now uses it: a phone that is playing audio is
+   never frozen. While the service is armed it loops one second of silence from
+   `files/keepalive/silence.wav` (8 kHz mono, no audio focus, inaudible), which
+   keeps the process out of the freezer with the screen off. Verified: 160 s
+   with the screen off and the app stayed unfrozen and answered `/health` every
+   time, and a Jamendo track kept advancing (19.7 s, 40.4 s, 60.8 s) while it
+   played. `/audio/status` reports `keep_alive` so this is observable. The cost
+   is an idle audio path, roughly 1–2% of battery per hour; arming and disarming
+   start and stop it. Samsung's own exemption (**Settings → Battery and device
+   care → Battery → Background usage limits → Never sleeping apps**, plus
+   turning off **Put unused apps to sleep**) is still worth applying, and gives
+   the same result without the silent track.
 
 ## 5. Build and install
 

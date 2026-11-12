@@ -11,6 +11,7 @@ import android.util.Log;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
@@ -31,6 +32,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 final class AudioController {
     static final String TAG = "GalaxyAudio";
     static final int SAMPLE_RATE = 16000;
+    private static final int KEEPALIVE_RATE = 8000;
 
     private final Context context;
     private final Set<LinkedBlockingQueue<byte[]>> subscribers =
@@ -45,6 +47,7 @@ final class AudioController {
     private long recordingBytes;
     private long recordingStarted;
     private MediaPlayer player;
+    private MediaPlayer keepAlive;
     private String playing = "";
     private volatile boolean preparing;
     private volatile String playbackError = "";
@@ -82,6 +85,7 @@ final class AudioController {
                 .put("sample_rate", SAMPLE_RATE)
                 .put("playing", playing)
                 .put("state", playbackState())
+                .put("keep_alive", keepAlive != null)
                 .put("error", playbackError);
         if (recording && recordingStarted > 0) {
             payload.put("seconds", (System.currentTimeMillis() - recordingStarted) / 1000);
@@ -275,6 +279,71 @@ final class AudioController {
         }
     }
 
+    /**
+     * Hold the phone out of the freezer with a silent loop.
+     *
+     * Samsung freezes an idle app once the screen goes off, even while its
+     * foreground service runs, and a frozen process answers nothing: remote
+     * control dies until someone opens the app. A phone that is playing audio
+     * is never frozen, so an armed service loops one second of silence. It is
+     * inaudible, takes no audio focus, and stops with the service.
+     */
+    void startKeepAlive() {
+        synchronized (lock) {
+            if (keepAlive != null) {
+                return;
+            }
+            try {
+                MediaPlayer loop = mediaPlayer();
+                loop.setDataSource(silentFile().getAbsolutePath());
+                loop.setLooping(true);
+                loop.prepare();
+                loop.start();
+                keepAlive = loop;
+            } catch (Exception error) {
+                Log.w(TAG, "cannot hold the phone awake with silence: " + error);
+            }
+        }
+    }
+
+    private void stopKeepAlive() {
+        MediaPlayer loop = keepAlive;
+        keepAlive = null;
+        if (loop == null) {
+            return;
+        }
+        try {
+            loop.stop();
+        } catch (Exception ignored) {
+        }
+        try {
+            loop.release();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** One second of 16-bit mono silence, written once next to the app. */
+    private File silentFile() throws Exception {
+        File directory = new File(context.getFilesDir(), "keepalive");
+        File file = new File(directory, "silence.wav");
+        long bytes = KEEPALIVE_RATE * 2L;
+        if (file.isFile() && file.length() == 44 + bytes) {
+            return file;
+        }
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            throw new IOException("cannot create the keepalive directory");
+        }
+        RandomAccessFile out = new RandomAccessFile(file, "rw");
+        try {
+            out.setLength(0);
+            out.write(new byte[(int) (44 + bytes)]);
+            finalizeWav(out, bytes);
+        } finally {
+            out.close();
+        }
+        return file;
+    }
+
     JSONObject control(String action) throws Exception {
         synchronized (lock) {
             MediaPlayer current = player;
@@ -299,6 +368,7 @@ final class AudioController {
 
     void stopAll() {
         synchronized (lock) {
+            stopKeepAlive();
             releasePlayer();
             playing = "";
             preparing = false;

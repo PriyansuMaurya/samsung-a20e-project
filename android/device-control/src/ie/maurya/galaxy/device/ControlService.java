@@ -49,6 +49,9 @@ public final class ControlService extends Service {
         } catch (Exception error) {
             Log.e(LocalServer.TAG, "could not start control server: " + error);
         }
+        // While armed the app must stay reachable with the screen off, so it
+        // keeps a silent track playing: the phone never freezes a player.
+        audio.startKeepAlive();
         PowerManager power = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "galaxy:device-control");
         wakeLock.setReferenceCounted(false);
